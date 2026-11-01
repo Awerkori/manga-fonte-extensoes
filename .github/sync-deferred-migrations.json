@@ -2,7 +2,7 @@
   "themes": {
     "madara": {
       "patch_base": "1386f49046f2f8fabb5444609f3dfd8e9f941b7c",
-      "reason": "proof build/tests failed",
+      "reason": "unsupported structural migration",
       "units": [
         "src/all/allporncomicsco",
         "src/all/comicsvalley",
@@ -246,7 +246,7 @@
         "src/vi/truyentuoitho",
         "src/zh/bakamh"
       ],
-      "upstream_ref": "0d83f6be79e12b0a8b6c6f20a500c0e9456c222a"
+      "upstream_ref": "1dfd0bcf25b48cb5bd42d9191918a29072c67a61"
     }
   }
 }
