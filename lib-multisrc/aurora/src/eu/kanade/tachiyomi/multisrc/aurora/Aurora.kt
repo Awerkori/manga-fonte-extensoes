@@ -41,7 +41,7 @@ abstract class Aurora : KeiSource() {
 
     override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = defaultClient()
 
-    override fun imageRequest(page: Page): Request = GET(
+    override fun getImageRequest(page: Page): Request = GET(
         page.imageUrl!!,
         headersBuilder()
             .set("Referer", "$baseUrl/")
