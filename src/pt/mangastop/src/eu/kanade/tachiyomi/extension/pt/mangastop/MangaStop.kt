@@ -1,11 +1,5 @@
 package eu.kanade.tachiyomi.extension.pt.mangastop
 
-import androidx.preference.PreferenceScreen
-import eu.kanade.tachiyomi.multisrc.mangathemesia.ClientHintsInterceptor
-import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
-import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -14,164 +8,97 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
-import keiyoushi.lib.randomua.addRandomUAPreference
-import keiyoushi.lib.randomua.setRandomUserAgent
-import keiyoushi.network.addCookie
+import keiyoushi.network.Fetch
+import keiyoushi.network.get
 import keiyoushi.network.rateLimit
+import keiyoushi.source.KeiSource
 import keiyoushi.utils.firstInstanceOrNull
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.Json
+import keiyoushi.utils.parseAs
+import keiyoushi.utils.stringOrNull
+import keiyoushi.utils.toJsonElement
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Interceptor
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import uy.kohesive.injekt.injectLazy
-import java.text.ParseException
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 @Source
-abstract class MangaStop :
-    MangaThemesia(),
-    ConfigurableSource {
+abstract class MangaStop : KeiSource() {
 
-    private val apiUrl get() = "$baseUrl/wp-json/mangastop/v1"
-
-    private val json: Json by injectLazy()
-
-    private val dateFormatCustom = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH)
-
-    override fun OkHttpClient.Builder.configureClient() = apply {
-        addInterceptor(
-            Interceptor { chain ->
-                val request = chain.request()
-                if (request.url.host.contains("images")) {
-                    val newRequest = request.newBuilder()
-                        .header("Sec-Fetch-Dest", "image")
-                        .header("Sec-Fetch-Mode", "no-cors")
-                        .header("Sec-Fetch-Site", "same-site")
-                        .build()
-                    chain.proceed(newRequest)
-                } else {
-                    chain.proceed(request)
-                }
-            },
-        )
-        addCookie("wpmanga-ada" to "1")
-        addInterceptor(ClientHintsInterceptor())
+    override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = apply {
         rateLimit(2)
     }
 
-    override fun Headers.Builder.configureHeaders() = apply {
-        set("Accept", "application/json, text/plain, */*")
-        set("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-        set("Origin", baseUrl)
-        set("Referer", "$baseUrl/")
-        setRandomUserAgent()
-    }
+    private val apiUrl: HttpUrl get() = "$baseUrl/wp-json/mangastop/v1".toHttpUrl()
 
-    // ============================== Popular ===============================
+    override suspend fun getPopularManga(page: Int) = fetchMangaList("mais-populares", page)
 
-    override suspend fun getPopularManga(page: Int): MangasPage {
-        val request = GET("$apiUrl/mais-populares?pagina=$page&por_pagina=20", headers)
-        return popularMangaParse(client.newCall(request).awaitSuccess())
-    }
-
-    private fun popularMangaParse(response: okhttp3.Response): MangasPage {
-        val data = json.decodeFromString<JsonObject>(response.body.string())
-        val mangasArray = data["mangas"]?.jsonArray ?: return MangasPage(emptyList(), false)
-        val paginacao = data["paginacao"]?.jsonObject
-
-        val mangas = mangasArray.map {
-            val obj = it.jsonObject
-            SManga.create().apply {
-                val id = obj["id"]?.jsonPrimitive?.content ?: ""
-                val slug = obj["slug"]?.jsonPrimitive?.content ?: ""
-                url = "/obra/$id#$slug"
-                title = obj["titulo"]?.jsonPrimitive?.content ?: ""
-                thumbnail_url = obj["thumbnail"]?.jsonPrimitive?.content ?: obj["capa_url"]?.jsonPrimitive?.content
-            }
-        }
-
-        val hasNextPage = paginacao?.get("tem_proxima")?.jsonPrimitive?.booleanOrNull ?: false
-
-        return MangasPage(mangas, hasNextPage)
-    }
-
-    // =============================== Latest ===============================
-
-    override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val request = GET("$apiUrl/recentes?pagina=$page&por_pagina=24&tipo=Manhwa", headers)
-        return popularMangaParse(client.newCall(request).awaitSuccess())
-    }
-
-    // =============================== Search ===============================
-
-    // =============================== Search ===============================
+    override suspend fun getLatestUpdates(page: Int) = fetchMangaList("recentes", page)
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val request = if (query.isNotBlank()) {
-            val url = "$apiUrl/busca".toHttpUrl().newBuilder().apply {
-                addQueryParameter("pagina", page.toString())
-                addQueryParameter("q", query)
+        query.toSiteUrlOrNull()?.let { return getMangasByUrl(it, page) }
 
-                val tipo = filters.firstInstanceOrNull<TypeFilter>()?.toUriPart()
-                if (!tipo.isNullOrBlank()) {
-                    addQueryParameter("tipo", tipo)
-                }
-            }.build()
-
-            GET(url.toString(), headers)
-        } else {
-            val url = "$apiUrl/manga".toHttpUrl().newBuilder().apply {
-                addQueryParameter("pagina", page.toString())
-                addQueryParameter("por_pagina", "24")
-
-                val tipo = filters.firstInstanceOrNull<TypeFilter>()?.toUriPart()
-                if (!tipo.isNullOrBlank()) {
-                    addQueryParameter("tipo", tipo)
-                }
-            }.build()
-
-            GET(url.toString(), headers)
+        if (query.isNotBlank()) {
+            val url = apiUrl.newBuilder()
+                .addPathSegment("busca")
+                .addQueryParameter("q", query.trim())
+                .addQueryParameter("tipo", "obras")
+                .addQueryParameter("pagina", page.toString())
+                .addQueryParameter("por_pagina", PER_PAGE)
+                .build()
+            return client.get(url, Fetch.XHR).parseAs<BuscaDto>().toMangasPage()
         }
 
-        val response = client.newCall(request).awaitSuccess()
-        val requestUrl = response.request.url.toString()
-        if (requestUrl.contains("/busca")) {
-            val data = json.decodeFromString<JsonObject>(response.body.string())
-            val obras = data["obras"]?.jsonObject ?: return MangasPage(emptyList(), false)
-            val mangasArray = obras["lista"]?.jsonArray ?: return MangasPage(emptyList(), false)
-
-            val mangas = mangasArray.map {
-                val obj = it.jsonObject
-                SManga.create().apply {
-                    val id = obj["id"]?.jsonPrimitive?.content ?: ""
-                    val slug = obj["slug"]?.jsonPrimitive?.content ?: ""
-                    url = "/obra/$id#$slug"
-                    title = obj["titulo"]?.jsonPrimitive?.content ?: ""
-                    thumbnail_url = obj["thumbnail"]?.jsonPrimitive?.content ?: obj["capa_url"]?.jsonPrimitive?.content
-                }
-            }
-
-            val totalPaginas = obras["total_paginas"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
-            val pagina = data["pagina"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
-            val hasNextPage = pagina < totalPaginas
-
-            return MangasPage(mangas, hasNextPage)
-        } else {
-            return popularMangaParse(response)
+        val type = filters.firstInstanceOrNull<TypeFilter>()?.selected.orEmpty()
+        val genre = filters.firstInstanceOrNull<GenreFilter>()?.selected.orEmpty()
+        if (genre.isNotEmpty()) {
+            return fetchMangaList("genero", page, type) { addQueryParameter("slug", genre) }
         }
+
+        val sort = filters.firstInstanceOrNull<SortFilter>()?.selected ?: "mais-populares"
+        return fetchMangaList(sort, page, type)
     }
 
-    // =========================== Manga Details & Chapters ============================
+    private suspend fun fetchMangaList(
+        endpoint: String,
+        page: Int,
+        type: String = "",
+        params: HttpUrl.Builder.() -> Unit = {},
+    ): MangasPage {
+        val url = apiUrl.newBuilder()
+            .addPathSegment(endpoint)
+            .apply(params)
+            .addQueryParameter("pagina", page.toString())
+            .addQueryParameter("por_pagina", PER_PAGE)
+            .apply { if (type.isNotEmpty()) addQueryParameter("tipo", type) }
+            .build()
+        return client.get(url, Fetch.XHR).parseAs<MangaListDto>().toMangasPage()
+    }
+
+    // Also accepts site links pasted without the scheme, e.g. "mangastop.net/obra/123" or "/manga/slug/"
+    private fun String.toSiteUrlOrNull(): HttpUrl? {
+        val query = trim()
+        val host = baseUrl.toHttpUrl().host
+        return when {
+            query.startsWith("/") -> "$baseUrl$query"
+            query.startsWith("$host/") || query.startsWith("www.$host/") -> "https://$query"
+            else -> null
+        }?.toHttpUrlOrNull()
+    }
+
+    override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
+        if (url.host.removePrefix("www.") != baseUrl.toHttpUrl().host) return null
+        val id = resolveId(url.encodedPath) ?: return null
+        val mangaId = when (url.pathSegments.first()) {
+            "obra", "manga" -> id
+            else -> fetchLeitor(id).mangaId.toString()
+        }
+        return fetchObra(mangaId).toSManga()
+    }
+
+    override fun getMangaUrl(manga: SManga): String = manga.knownId()?.let { "$baseUrl/obra/$it" } ?: (baseUrl + manga.url)
+
+    override fun getChapterUrl(chapter: SChapter): String = if (chapter.url.isId()) "$baseUrl/leitor/${chapter.url}" else baseUrl + chapter.url
 
     override suspend fun fetchMangaUpdate(
         manga: SManga,
@@ -179,125 +106,83 @@ abstract class MangaStop :
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val id = manga.url.substringAfter("/obra/").substringBefore("#")
-        val response = client.newCall(GET("$apiUrl/obra/$id", headers)).awaitSuccess()
-        val obj = json.decodeFromString<JsonObject>(response.body.string())
-
-        val details = if (fetchDetails) {
-            SManga.create().apply {
-                title = obj["titulo"]?.jsonPrimitive?.content ?: ""
-                thumbnail_url = obj["capa_url"]?.jsonPrimitive?.content ?: obj["thumbnail"]?.jsonPrimitive?.content
-
-                var syn = obj["sinopse"]?.jsonPrimitive?.content ?: obj["descricao_html"]?.jsonPrimitive?.content ?: obj["descricao"]?.jsonPrimitive?.content ?: ""
-                syn = syn.replace("<p>", "").replace("</p>", "\n").replace("<br />", "\n").replace("<br>", "\n").trim()
-                description = syn
-
-                author = obj["manga_autor"]?.jsonArray?.joinToString { it.jsonObject["nome"]?.jsonPrimitive?.content ?: "" } ?: obj["autor"]?.jsonPrimitive?.content
-                artist = obj["manga_artista"]?.jsonArray?.joinToString { it.jsonObject["nome"]?.jsonPrimitive?.content ?: "" } ?: obj["artista"]?.jsonPrimitive?.content
-
-                genre = obj["generos"]?.jsonArray?.joinToString { it.jsonObject["nome"]?.jsonPrimitive?.content ?: "" }
-
-                status = customParseStatus(obj["status"]?.jsonPrimitive?.content)
-            }
-        } else {
-            manga
-        }
-
-        val chList = if (fetchChapters) {
-            val chaptersArray = obj["capitulos"]?.jsonArray ?: return SMangaUpdate(details, emptyList())
-            chaptersArray.map {
-                val chObj = it.jsonObject
-                SChapter.create().apply {
-                    val chId = chObj["id"]?.jsonPrimitive?.content ?: ""
-                    url = "/leitor/$chId"
-                    chapter_number = chObj["numero"]?.jsonPrimitive?.content?.toFloatOrNull() ?: -1f
-                    name = "Capítulo ${chObj["numero"]?.jsonPrimitive?.content}"
-                    date_upload = parseDate(chObj["data"]?.jsonPrimitive?.content)
-                }
-            }.sortedByDescending { it.chapter_number }
-        } else {
-            chapters
-        }
-
-        return SMangaUpdate(details, chList)
+        val id = manga.knownId() ?: resolveId(manga.url) ?: throw Exception("Obra não encontrada")
+        val obra = fetchObra(id)
+        return SMangaUpdate(obra.toSManga(), obra.toSChapterList())
     }
 
-    override fun getMangaUrl(manga: SManga): String {
-        val slug = manga.url.substringAfterLast("#")
-        return "$baseUrl/manga/$slug"
-    }
-
-    private fun customParseStatus(status: String?) = when {
-        status == null -> SManga.UNKNOWN
-        status.contains("Ongoing", ignoreCase = true) -> SManga.ONGOING
-        status.contains("Completed", ignoreCase = true) -> SManga.COMPLETED
-        status.contains("Hiatus", ignoreCase = true) -> SManga.ON_HIATUS
-        else -> SManga.UNKNOWN
-    }
-
-    override fun getChapterUrl(chapter: SChapter): String = "$baseUrl${chapter.url}"
-
-    private fun parseDate(dateStr: String?): Long {
-        if (dateStr == null) return 0L
-        return try {
-            dateFormatCustom.parse(dateStr)?.time ?: 0L
-        } catch (e: ParseException) {
-            0L
-        }
-    }
-
-    // =============================== Pages ================================
+    private suspend fun fetchObra(id: String) = client.get(apiUrl.newBuilder().addPathSegment("obra").addPathSegment(id).build(), Fetch.XHR)
+        .parseAs<ObraDto>()
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val id = chapter.url.substringAfter("/leitor/")
-        val response = client.newCall(GET("$apiUrl/leitor/$id", headers)).awaitSuccess()
-        val obj = json.decodeFromString<JsonObject>(response.body.string())
-        val imagesArray = obj["imagens"]?.jsonArray ?: return emptyList()
-
-        return imagesArray.mapIndexed { i, it ->
-            val url = it.jsonObject["url"]?.jsonPrimitive?.content ?: ""
-            Page(i, imageUrl = url)
-        }
+        val id = resolveId(chapter.url) ?: throw Exception("Capítulo não encontrado")
+        return fetchLeitor(id).imagens.mapIndexed { index, imagem -> Page(index, imageUrl = imagem.url) }
     }
 
-    override fun imageRequest(page: Page): Request {
-        val newHeaders = headersBuilder()
-            .set("Accept", "image/avif,image/webp,image/png,image/jpeg,*/*")
-            .set("Sec-Fetch-Dest", "image")
-            .set("Sec-Fetch-Mode", "no-cors")
-            .set("Sec-Fetch-Site", "same-site")
-            .set("Referer", baseUrl)
+    private suspend fun fetchLeitor(id: String) = client.get(apiUrl.newBuilder().addPathSegment("leitor").addPathSegment(id).build(), Fetch.XHR)
+        .parseAs<LeitorDto>()
+
+    /**
+     * Returns the WordPress post id behind a stored url or site path. A bare id (the current stored format) and
+     * current paths (/obra/{id}, /leitor/{id}) carry it directly; paths from the old MangaThemesia site
+     * (/manga/{slug}/ and /{chapter-slug}/) are looked up by slug.
+     */
+    private suspend fun resolveId(path: String): String? {
+        if (path.isId()) return path
+        val segments = path.trim('/').split('/')
+        val (type, slug) = when {
+            segments.size >= 2 && segments[0] in listOf("obra", "leitor") -> return segments[1].toLongOrNull()?.toString()
+            segments.size >= 2 && segments[0] == "manga" -> "manga" to segments[1]
+            segments.size == 1 && segments[0].isNotEmpty() -> "posts" to segments[0]
+            else -> return null
+        }
+        val url = "$baseUrl/wp-json/wp/v2".toHttpUrl().newBuilder()
+            .addPathSegment(type)
+            .addQueryParameter("slug", slug)
+            .addQueryParameter("_fields", "id")
             .build()
-        return GET(page.imageUrl!!, newHeaders)
+        return client.get(url, Fetch.XHR).parseAs<List<PostIdDto>>().firstOrNull()?.id?.toString()
     }
 
-    // ============================== Filters ===============================
+    private fun String.isId() = isNotEmpty() && all { it in '0'..'9' }
 
-    override fun getFilterList(data: JsonElement?) = FilterList(
-        TypeFilter(),
-    )
+    private fun SManga.knownId(): String? = url.takeIf { it.isId() } ?: memo["id"]?.stringOrNull
 
-    class TypeFilter :
-        Filter.Select<String>(
-            "Tipo",
-            arrayOf(
-                "Qualquer",
-                "Mangá",
-                "Manhwa",
-                "Manhua",
-                "Pornhwa",
-            ),
-        ) {
-        fun toUriPart(): String = when (state) {
-            1 -> "Manga"
-            2 -> "Manhwa"
-            3 -> "Manhua"
-            4 -> "Pornhwa"
-            else -> ""
-        }
+    override val supportsFilterFetching get() = true
+
+    override suspend fun fetchFilterData(): JsonElement {
+        val genres = mutableListOf<GenreDto>()
+        var page = 1
+        do {
+            val url = "$baseUrl/wp-json/wp/v2/genres".toHttpUrl().newBuilder()
+                .addQueryParameter("per_page", "100")
+                .addQueryParameter("page", page.toString())
+                .addQueryParameter("hide_empty", "true")
+                .addQueryParameter("_fields", "name,slug")
+                .build()
+            val response = client.get(url, Fetch.XHR)
+            val totalPages = response.header("X-WP-TotalPages")?.toIntOrNull() ?: 1
+            genres += response.parseAs<List<GenreDto>>()
+        } while (page++ < totalPages)
+        return genres.toJsonElement()
     }
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        screen.addRandomUAPreference()
+    override fun getFilterList(data: JsonElement?): FilterList {
+        val genres = data?.parseAs<List<GenreDto>>()
+        return FilterList(
+            buildList<Filter<*>> {
+                add(Filter.Header("Os filtros não se aplicam à busca por texto"))
+                add(SortFilter())
+                add(TypeFilter())
+                if (genres != null) {
+                    add(Filter.Header("Com um gênero selecionado, a ordenação é ignorada"))
+                    add(GenreFilter(genres))
+                }
+            },
+        )
+    }
+
+    companion object {
+        private const val PER_PAGE = "24"
     }
 }

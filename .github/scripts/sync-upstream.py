@@ -580,13 +580,28 @@ def preflight_multisrc(
             upstream_lib = upstream[1] if upstream else None
             new_lib = upstream_multi[0] if upstream_multi else None
             lib_downgrade = is_lib_version_downgrade(local_lib, new_lib)
-            needs = bool(local_lib != new_lib or (local and upstream and local[0] != upstream[0]))
-            supported = bool(
-                upstream_multi
-                and upstream
-                and upstream[0] == theme
-                and upstream_lib == new_lib
-            )
+
+            is_protected = unit in protected
+            local_uses_theme = bool(local and local[0] == theme)
+            upstream_uses_theme = bool(upstream and upstream[0] == theme)
+
+            if is_protected and local_uses_theme:
+                # Protected unit kept on this theme by Nox
+                needs = bool(local_lib != new_lib)
+                supported = bool(upstream_multi and not lib_downgrade)
+            elif not is_protected and not upstream_uses_theme:
+                # Unprotected unit leaving this theme for another theme or standalone;
+                # its migration is handled by its own unit sync, not by this theme.
+                needs = False
+                supported = True
+            else:
+                needs = bool(local_lib != new_lib or (local and upstream and local[0] != upstream[0]))
+                supported = bool(
+                    upstream_multi
+                    and upstream
+                    and upstream[0] == theme
+                    and upstream_lib == new_lib
+                )
             source_changed = bool(subprocess.run(
                 ["git", "diff", "--quiet", base, "HEAD", "--", f"{unit}/src"],
             ).returncode != 0)
@@ -939,6 +954,95 @@ def validate_local_project_dependencies() -> list[str]:
                     f"{module_path} não existe",
                 )
     return errors
+
+
+def find_dependents_of_module(module_unit: str) -> list[tuple[str, Path]]:
+    """Return list of (unit_name, build_file_path) that declare a dependency on module_unit."""
+    project_dep = ":" + module_unit.replace("/", ":")
+    dependents = []
+    roots = [Path("core"), Path("compiler"), Path("lib"), Path("lib-multisrc"), Path("src")]
+    build_files = []
+    for root in roots:
+        if root.is_dir():
+            build_files.extend(root.rglob("build.gradle.kts"))
+            build_files.extend(root.rglob("build.gradle"))
+
+    mod_parts = Path(module_unit).parts
+    for build_file in sorted(set(build_files)):
+        if build_file.parts[: len(mod_parts)] == mod_parts:
+            continue
+        try:
+            content = build_file.read_text()
+        except OSError:
+            continue
+        for match in _LOCAL_PROJECT_RE.finditer(content):
+            if match.group(1) == project_dep:
+                parts = build_file.parts
+                if len(parts) >= 3 and parts[0] == "src":
+                    dep_unit = "/".join(parts[:3])
+                elif len(parts) >= 2 and parts[0] in {"lib", "lib-multisrc"}:
+                    dep_unit = "/".join(parts[:2])
+                else:
+                    dep_unit = str(build_file.parent)
+                dependents.append((dep_unit, build_file))
+                break
+    return dependents
+
+
+def module_provided_packages(module_unit: str) -> set[str]:
+    """Extract package names declared inside a module."""
+    packages = set()
+    mod_path = Path(module_unit)
+    if mod_path.is_dir():
+        pkg_re = re.compile(r"^\s*package\s+([\w.]+)", re.MULTILINE)
+        for ext in ("*.kt", "*.java"):
+            for f in mod_path.rglob(ext):
+                try:
+                    for m in pkg_re.finditer(f.read_text()):
+                        packages.add(m.group(1))
+                except OSError:
+                    pass
+    if not packages:
+        parts = module_unit.split("/")
+        if len(parts) >= 2:
+            packages.add(f"keiyoushi.{parts[0]}.{parts[1]}")
+    return packages
+
+
+def unit_uses_packages(unit: str, packages: set[str]) -> bool:
+    """Check if any Kotlin/Java file in unit imports or references the given packages."""
+    unit_path = Path(unit)
+    if not unit_path.is_dir() or not packages:
+        return False
+    escaped = [re.escape(pkg) for pkg in packages]
+    pattern = re.compile(r"(?:import\s+(?:" + "|".join(escaped) + r")|(?:\b" + "|".join(escaped) + r")\.)")
+    for ext in ("*.kt", "*.java"):
+        for f in unit_path.rglob(ext):
+            try:
+                if pattern.search(f.read_text()):
+                    return True
+            except OSError:
+                pass
+    return False
+
+
+def prune_project_dependency_from_build_file(build_file: Path, project_path: str) -> bool:
+    """Safely remove a project dependency line from a build file."""
+    if not build_file.exists():
+        return False
+    text = build_file.read_text()
+    pattern = re.compile(
+        r"^[ \t]*(?:implementation|api|compileOnly)\s*\(\s*project\s*\(\s*(?:path\s*=\s*)?[\"']"
+        + re.escape(project_path)
+        + r"[\"']\s*\)\s*\)[ \t]*\r?\n?",
+        re.MULTILINE,
+    )
+    new_text, count = pattern.subn("", text)
+    if count > 0:
+        new_text = re.sub(r"(?m)^[ \t]*dependencies\s*\{\s*\}\r?\n?", "", new_text)
+        build_file.write_text(new_text)
+        return True
+    return False
 
 
 def validate_affected_builds(units: list[str]) -> None:
@@ -1513,6 +1617,46 @@ def _apply_units(
             if unit in protected_set:
                 print(f"Protected Nox unit: preserving local {unit} (removed upstream)")
                 continue
+
+            # Shared library removal protection:
+            if unit.startswith("lib/") or unit.startswith("lib-multisrc/"):
+                dependents = find_dependents_of_module(unit)
+                project_dep = ":" + unit.replace("/", ":")
+                packages = module_provided_packages(unit)
+                must_preserve_library = False
+                unresolved_dependents = []
+
+                for dep_unit, dep_build_file in dependents:
+                    will_be_restored = (
+                        dep_unit in units
+                        and path_exists(upstream_ref, dep_unit)
+                        and dep_unit not in protected_set
+                        and dep_unit not in blocked_theme_extensions
+                    )
+                    if will_be_restored:
+                        upstream_text = _read_file_text(upstream_ref, f"{dep_unit}/build.gradle.kts") or ""
+                        if project_dep not in upstream_text:
+                            continue
+
+                    if unit_uses_packages(dep_unit, packages):
+                        must_preserve_library = True
+                        unresolved_dependents.append(dep_unit)
+                    else:
+                        if prune_project_dependency_from_build_file(dep_build_file, project_dep):
+                            git("add", "--", str(dep_build_file))
+                            validation_units.add(dep_unit)
+                            print(
+                                f"Pruned unused dependency {project_dep} from {dep_build_file} "
+                                f"(module was removed upstream)",
+                            )
+
+                if must_preserve_library:
+                    print(
+                        f"NOX_PRESERVE_SHARED_LIB: preserving local {unit} "
+                        f"(actively required by local units: {', '.join(unresolved_dependents)})",
+                    )
+                    continue
+
             print(f"UPSTREAM_REMOVED: removing {unit} (historical upstream deletion)")
 
         print(f"Applying {unit}")

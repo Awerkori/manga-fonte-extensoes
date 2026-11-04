@@ -13,8 +13,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import keiyoushi.annotation.Source
-import keiyoushi.lib.randomua.addRandomUAPreference
-import keiyoushi.lib.randomua.setRandomUserAgent
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
@@ -45,10 +44,6 @@ abstract class NHentai :
     private val shortenTitleRegex = Regex("""(\[[^]]*]|[({][^)}]*[)}])""")
 
     override fun OkHttpClient.Builder.configureClient() = rateLimit(4)
-
-    override fun okhttp3.Headers.Builder.configureHeaders() = setRandomUserAgent(
-        filterInclude = listOf("chrome"),
-    )
 
     override suspend fun getPopularManga(page: Int): MangasPage {
         val query = languageQuery.takeIf(String::isNotBlank) ?: "\"\""
@@ -103,7 +98,7 @@ abstract class NHentai :
     }
 
     private suspend fun getListing(url: HttpUrl): MangasPage {
-        val result = client.get(url).parseAs<GalleryListDto>()
+        val result = client.get(url, Fetch.XHR).parseAs<GalleryListDto>()
         val currentPage = url.queryParameter("page")?.toIntOrNull() ?: 1
         return MangasPage(
             result.result.map(::summaryToManga),
@@ -139,7 +134,7 @@ abstract class NHentai :
         }
     }
 
-    private suspend fun fetchGallery(id: Long) = client.get("$apiUrl/galleries/$id").parseAs<GalleryDto>()
+    private suspend fun fetchGallery(id: Long) = client.get("$apiUrl/galleries/$id", Fetch.XHR).parseAs<GalleryDto>()
 
     private fun summaryToManga(summary: GallerySummary) = SManga.create().apply {
         setUrlWithoutDomain("/g/${summary.id}/")
@@ -219,7 +214,6 @@ abstract class NHentai :
                 true
             }
         }.also(screen::addPreference)
-        screen.addRandomUAPreference()
     }
 
     class AdvSearchFilter(name: String) : Filter.Text(name)

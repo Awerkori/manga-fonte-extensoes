@@ -6,17 +6,18 @@ plugins {
 
 keiyoushi {
     name = "Manga Stop"
-    versionCode = 47
-    contentWarning = ContentWarning.SAFE
+    versionCode = 48
+    contentWarning = ContentWarning.MIXED
     libVersion = "1.6"
-    theme = "mangathemesia"
 
     source {
         lang = "pt-BR"
         baseUrl = "https://mangastop.net"
     }
-}
 
-dependencies {
-    implementation(project(":lib:randomua"))
+    deeplink {
+        path("/obra/..*")
+        path("/leitor/..*")
+        path("/manga/..*")
+    }
 }

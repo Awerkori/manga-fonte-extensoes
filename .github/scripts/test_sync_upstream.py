@@ -549,6 +549,49 @@ class LocalProjectDependencyTest(GitFixture):
         )
         self.assertEqual(sync_upstream.validate_local_project_dependencies(), [])
 
+    def test_upstream_removed_shared_lib_prunes_unused_dependency_and_succeeds(self):
+        self.write("lib/oldlib/build.gradle.kts", "plugins {}\n")
+        self.write("lib/oldlib/src/oldlib/Helper.kt", "package oldlib\n")
+        self.write(
+            "src/pt/extension/build.gradle.kts",
+            'dependencies {\n    implementation(project(":lib:oldlib"))\n}\n',
+        )
+        self.write("src/pt/extension/src/Extension.kt", "package pt.extension\nclass Extension\n")
+        base = self.commit("base")
+
+        self.git("branch", "upstream")
+        self.git("checkout", "-q", "upstream")
+        self.git("rm", "-r", "lib/oldlib")
+        self.commit("upstream removes oldlib")
+        self.git("checkout", "-q", "-B", "nox", base)
+
+        bumped = sync_upstream.apply_units("upstream", ["lib/oldlib"], set(), [], [], set(), {})
+        self.assertFalse(Path("lib/oldlib").exists())
+        self.assertEqual(sync_upstream.validate_local_project_dependencies(), [])
+        self.assertNotIn(":lib:oldlib", Path("src/pt/extension/build.gradle.kts").read_text())
+
+    def test_upstream_removed_shared_lib_preserves_module_when_actively_used_in_code(self):
+        self.write(".github/nox-protected.txt", "src/pt/protected\n")
+        self.write("lib/activelib/build.gradle.kts", "plugins {}\n")
+        self.write("lib/activelib/src/activelib/Helper.kt", "package activelib\nclass Helper\n")
+        self.write(
+            "src/pt/protected/build.gradle.kts",
+            'dependencies {\n    implementation(project(":lib:activelib"))\n}\n',
+        )
+        self.write("src/pt/protected/src/Extension.kt", "package pt.protected\nimport activelib.Helper\nclass Extension\n")
+        base = self.commit("base")
+
+        self.git("branch", "upstream")
+        self.git("checkout", "-q", "upstream")
+        self.git("rm", "-r", "lib/activelib")
+        self.commit("upstream removes activelib")
+        self.git("checkout", "-q", "-B", "nox", base)
+
+        bumped = sync_upstream.apply_units("upstream", ["lib/activelib"], set(), ["src/pt/protected"], [], set(), {})
+        # activelib must be preserved locally because protected extension actively uses its imports
+        self.assertTrue(Path("lib/activelib/build.gradle.kts").exists())
+        self.assertEqual(sync_upstream.validate_local_project_dependencies(), [])
+
     def test_protected_nox_unit_preserves_local_identity_and_extra_files(self):
         unit = "src/pt/pointzerotoons"
         self.write(".github/nox-protected.txt", f"{unit}\n")
