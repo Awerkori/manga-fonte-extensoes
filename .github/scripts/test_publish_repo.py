@@ -133,7 +133,7 @@ class PublisherTest(unittest.TestCase):
         # Should pass without exception
         pub.validate_catalogs_consistency(exts, leg, assets, has_release_assets=True)
 
-    def test_validate_catalogs_consistency_fails_on_divergence(self):
+    def test_validate_catalogs_consistency_fails_on_extra_legacy_entry(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("publish_repo", SCRIPT)
         pub = importlib.util.module_from_spec(spec)
@@ -146,11 +146,65 @@ class PublisherTest(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             pub.validate_catalogs_consistency(exts, leg, assets, has_release_assets=True)
         self.assertIn("CATALOG_CONSISTENCY_ERROR", str(ctx.exception))
+        self.assertIn("extra in index.min: 1", str(ctx.exception))
+
+    def test_validate_catalogs_consistency_fails_on_missing_legacy_entry(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("publish_repo", SCRIPT)
+        pub = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pub)
+
+        exts = [extension(), extension("karikari", 1)]
+        leg = [legacy(extension())]
+        assets = {e.packageName: {"apk": {}} for e in exts}
+
+        with self.assertRaises(ValueError) as ctx:
+            pub.validate_catalogs_consistency(exts, leg, assets, has_release_assets=True)
+        self.assertIn("CATALOG_CONSISTENCY_ERROR", str(ctx.exception))
+        self.assertIn("missing in index.min: 1", str(ctx.exception))
+
+    def test_validate_catalogs_consistency_fails_on_missing_release_assets(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("publish_repo", SCRIPT)
+        pub = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pub)
+
+        exts = [extension(), extension("karikari", 1)]
+        leg = [legacy(e) for e in exts]
+        assets = {extension().packageName: {"apk": {}}}  # missing karikari
+
+        with self.assertRaises(ValueError) as ctx:
+            pub.validate_catalogs_consistency(exts, leg, assets, has_release_assets=True)
+        self.assertIn("CATALOG_CONSISTENCY_ERROR", str(ctx.exception))
+        self.assertIn("missing in release-assets: 1", str(ctx.exception))
+
+    def test_validate_catalogs_consistency_fails_on_extra_release_assets(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("publish_repo", SCRIPT)
+        pub = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pub)
+
+        exts = [extension()]
+        leg = [legacy(e) for e in exts]
+        assets = {
+            extension().packageName: {"apk": {}},
+            PREFIX + "ghost": {"apk": {}},  # extra ghost asset
+        }
+
+        with self.assertRaises(ValueError) as ctx:
+            pub.validate_catalogs_consistency(exts, leg, assets, has_release_assets=True)
+        self.assertIn("CATALOG_CONSISTENCY_ERROR", str(ctx.exception))
+        self.assertIn("extra in release-assets: 1", str(ctx.exception))
+
     def simulate(self, modern, old, update=None, deleted=()):
         with tempfile.TemporaryDirectory(prefix="nox-publisher-test-") as directory:
             root = Path(directory)
             (root / "index.json").write_text(json_format.MessageToJson(modern), encoding="utf-8")
             (root / "index.min.json").write_text(json.dumps(old), encoding="utf-8")
+            (root / "release-assets.json").write_text(
+                json.dumps({e.packageName: {"apk": {"name": f"{e.packageName}.apk", "sha256": "mock"}} for e in modern.extensionList.extensions}),
+                encoding="utf-8",
+            )
             if update:
                 build = root / "apk-artifacts" / "module" / "build"
                 for kind in ("apk", "jar"):
@@ -336,7 +390,13 @@ class PublisherTest(unittest.TestCase):
             root = Path(directory)
             (root / "index.json").write_text(json_format.MessageToJson(modern), encoding="utf-8")
             (root / "index.min.json").write_text(json.dumps(old), encoding="utf-8")
-            (root / "release-assets.json").write_text(json.dumps({koharu_pkg: {"apk": {"name": "a.apk", "sha256": "123"}}}), encoding="utf-8")
+            (root / "release-assets.json").write_text(
+                json.dumps({
+                    koharu_pkg: {"apk": {"name": "a.apk", "sha256": "123"}},
+                    extension("karikari", 1).packageName: {"apk": {"name": "k.apk", "sha256": "456"}},
+                }),
+                encoding="utf-8",
+            )
 
             previous = Path.cwd()
             try:

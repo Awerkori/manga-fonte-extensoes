@@ -119,7 +119,11 @@ def validate_catalogs_consistency(
     release_assets: dict,
     has_release_assets: bool = True,
 ) -> None:
-    """Fail-closed validation across index.json, index.min.json, and release-assets.json."""
+    """Fail-closed validation across index.json, index.min.json, and release-assets.json.
+
+    Enforces exact package correspondence across all catalogs and rejects any
+    missing, extra, or inconsistent entries.
+    """
     final_pkgs = {ext.packageName for ext in final_extensions}
     legacy_pkgs = {entry["pkg"] for entry in legacy_index}
 
@@ -133,17 +137,26 @@ def validate_catalogs_consistency(
         if in_final_only:
             print(f"  In index.json only: {sorted(in_final_only)}")
         raise ValueError(
-            f"CATALOG_CONSISTENCY_ERROR: index.json and index.min.json diverged by {len(diff_legacy)} packages"
+            f"CATALOG_CONSISTENCY_ERROR: index.json and index.min.json diverged by {len(diff_legacy)} packages "
+            f"(missing in index.min: {len(in_final_only)}, extra in index.min: {len(in_legacy_only)})"
         )
 
-    if has_release_assets and len(release_assets) >= len(final_pkgs):
+    if has_release_assets:
         assets_pkgs = set(release_assets.keys())
-        missing_assets = final_pkgs - assets_pkgs
-        if missing_assets:
-            print(f"CATALOG_CONSISTENCY_ERROR: packages missing from release-assets.json: {sorted(missing_assets)}")
+        diff_assets = assets_pkgs ^ final_pkgs
+        if diff_assets:
+            in_assets_only = assets_pkgs - final_pkgs
+            in_final_only = final_pkgs - assets_pkgs
+            print(f"CATALOG_CONSISTENCY_ERROR: index.json ({len(final_pkgs)}) and release-assets.json ({len(assets_pkgs)}) diverge!")
+            if in_assets_only:
+                print(f"  In release-assets.json only: {sorted(in_assets_only)}")
+            if in_final_only:
+                print(f"  In index.json only: {sorted(in_final_only)}")
             raise ValueError(
-                f"CATALOG_CONSISTENCY_ERROR: {len(missing_assets)} packages in index.json lack release-assets.json entries"
+                f"CATALOG_CONSISTENCY_ERROR: index.json and release-assets.json diverged by {len(diff_assets)} packages "
+                f"(missing in release-assets: {len(in_final_only)}, extra in release-assets: {len(in_assets_only)})"
             )
+
     print("CROSS_CATALOG_CONSISTENCY_CHECK=PASS")
 
 
