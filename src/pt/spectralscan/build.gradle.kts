@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "Nexus Toons"
-    versionCode = 3
+    versionCode = 64
     contentWarning = ContentWarning.MIXED
     libVersion = "1.6"
 
