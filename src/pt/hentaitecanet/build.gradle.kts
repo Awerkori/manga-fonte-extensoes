@@ -6,9 +6,11 @@ plugins {
 
 keiyoushi {
     name = "Hentaiteca.net"
-    versionCode = 0
+    versionCode = 59
     contentWarning = ContentWarning.NSFW
     libVersion = "1.6"
+
+    theme = "madara"
 
     source {
         baseUrl = "https://hentaiteca.net"
