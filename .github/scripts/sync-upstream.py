@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -6,6 +7,7 @@ import subprocess
 import sys
 import shutil
 import tempfile
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
@@ -14,6 +16,8 @@ UPSTREAM_URL = "https://github.com/keiyoushi/extensions-source.git"
 UPSTREAM_BRANCH = "main"
 SYNC_BRANCH = "sync"
 DEFERRED_MIGRATIONS_FILE = Path(".github/sync-deferred-migrations.json")
+DEFERRED_INCOMPATIBILITIES_FILE = Path(".github/sync-deferred-incompatibilities.json")
+FAILURE_SIGNATURES_FILE = Path(".github/sync-failure-signatures.json")
 
 
 def git(*args: str, check: bool = True) -> str:
@@ -531,6 +535,150 @@ def write_deferred_migrations(themes: dict[str, dict[str, object]]) -> bool:
     DEFERRED_MIGRATIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
     DEFERRED_MIGRATIONS_FILE.write_text(json.dumps({"themes": themes}, indent=2, sort_keys=True) + "\n")
     return True
+
+
+def load_deferred_incompatibilities() -> dict[str, dict[str, object]]:
+    """Load durable registry of deferred incompatible extensions."""
+    if not DEFERRED_INCOMPATIBILITIES_FILE.exists():
+        return {}
+    try:
+        data = json.loads(DEFERRED_INCOMPATIBILITIES_FILE.read_text(encoding="utf-8"))
+        return data.get("incompatibilities", {})
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def write_deferred_incompatibilities(incompatibilities: dict[str, dict[str, object]]) -> bool:
+    """Save durable registry of deferred incompatible extensions."""
+    if not incompatibilities:
+        if DEFERRED_INCOMPATIBILITIES_FILE.exists():
+            DEFERRED_INCOMPATIBILITIES_FILE.unlink()
+            return True
+        return False
+    DEFERRED_INCOMPATIBILITIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"incompatibilities": incompatibilities}
+    DEFERRED_INCOMPATIBILITIES_FILE.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
+def load_failure_signatures() -> dict[str, dict[str, object]]:
+    """Load cached deterministic failure signature to prevent duplicate failure loops."""
+    if not FAILURE_SIGNATURES_FILE.exists():
+        return {}
+    try:
+        return json.loads(FAILURE_SIGNATURES_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def write_failure_signatures(signatures: dict[str, dict[str, object]]) -> bool:
+    """Save cached deterministic failure signature."""
+    if not signatures:
+        if FAILURE_SIGNATURES_FILE.exists():
+            FAILURE_SIGNATURES_FILE.unlink()
+            return True
+        return False
+    FAILURE_SIGNATURES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    FAILURE_SIGNATURES_FILE.write_text(
+        json.dumps(signatures, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
+def compute_deterministic_signature(
+    local_head: str,
+    upstream_head: str,
+    failure_type: str,
+    units: list[str],
+    cause: str,
+) -> str:
+    seed = f"{local_head}:{upstream_head}:{failure_type}:{','.join(sorted(units))}:{cause}"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+class StructuralIncompatibilityError(RuntimeError):
+    def __init__(self, message: str, failed_units: list[str] | None = None):
+        super().__init__(message)
+        self.failed_units = failed_units or []
+
+
+class ApplyUnitsResult(list):
+    """Result of apply_units containing bumped list, state, and deferred incompatibilities."""
+    def __init__(
+        self,
+        bumped: list[str],
+        deferred_incompatibilities: dict[str, dict[str, object]] | None = None,
+        state: str = "SYNCED",
+    ):
+        super().__init__(bumped)
+        self.deferred_incompatibilities = deferred_incompatibilities or {}
+        self.state = state
+
+
+_GRADLE_FAILED_TASK_RE = re.compile(
+    r"(?:> Task |Execution failed for task '):((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler):([a-zA-Z0-9]+)",
+)
+_KOTLIN_ERROR_RE = re.compile(r"e:\s+file:///(.+?):(\d+):(\d+)\s*(.+)")
+
+
+def parse_gradle_failures(output: str) -> dict[str, dict[str, object]]:
+    """Parse Gradle output to extract failed units and diagnostic info."""
+    failed_units: dict[str, dict[str, object]] = {}
+
+    for match in _GRADLE_FAILED_TASK_RE.finditer(output):
+        gradle_module = match.group(1)
+        unit = gradle_module.replace(":", "/")
+        if unit not in failed_units:
+            failed_units[unit] = {
+                "unit": unit,
+                "cause": "Compilation failure",
+                "evidence": "",
+                "incompatibility_type": "KOTLIN_COMPILATION_ERROR",
+            }
+
+    for match in re.finditer(r"Execution failed for task ':([^:']+):([a-zA-Z0-9]+)'", output):
+        unit = match.group(1).replace(":", "/")
+        if unit.startswith(("src/", "lib/", "lib-multisrc/", "core", "compiler")) and unit not in failed_units:
+            failed_units[unit] = {
+                "unit": unit,
+                "cause": f"Task :{match.group(1)}:{match.group(2)} failed",
+                "evidence": "",
+                "incompatibility_type": "BUILD_INCOMPATIBILITY",
+            }
+
+    for m in _KOTLIN_ERROR_RE.finditer(output):
+        file_path, line, col, msg = m.group(1), m.group(2), m.group(3), m.group(4)
+        for unit in list(failed_units.keys()):
+            if unit in file_path:
+                failed_units[unit]["cause"] = msg.strip()
+                break
+
+    lines = output.splitlines()
+    for unit, info in failed_units.items():
+        relevant_lines = [
+            line for line in lines
+            if unit in line or (info["cause"] != "Compilation failure" and info["cause"] in line)
+        ]
+        evidence = "\n".join(relevant_lines[:30])
+        info["evidence"] = evidence or info["cause"]
+
+        full_text = info["cause"] + " " + info["evidence"]
+        if re.search(r"ksp|Generated\.kt|SourceProcessor|fetchBaseUrls.*mirrors|defaultUrl.*hardcodedUrl|hardcodedUrl.*defaultUrl", full_text, re.I):
+            info["incompatibility_type"] = "KSP_CODEGEN_ERROR"
+        elif re.search(r"No value passed for parameter|None of the following candidates is applicable|Unresolved reference|Argument type mismatch|Cannot access|not enough information to infer type", full_text, re.I):
+            info["incompatibility_type"] = "API_SIGNATURE_MISMATCH"
+        elif re.search(r"Could not resolve|Plugin.*not found|project.*não existe|não existe", full_text, re.I):
+            info["incompatibility_type"] = "DEPENDENCY_CONFLICT"
+        elif unit in {"core", "compiler"}:
+            info["incompatibility_type"] = "CORE_INCOMPATIBILITY"
+        else:
+            info["incompatibility_type"] = "KOTLIN_COMPILATION_ERROR"
+
+    return failed_units
 
 
 def preflight_multisrc(
@@ -1058,9 +1206,124 @@ def validate_affected_builds(units: list[str]) -> None:
     if not tasks:
         return
     print(f"Validating affected extensions: {', '.join(units)}")
-    result = subprocess.run([f"./{gradlew.name}", *tasks], text=True)
+    result = subprocess.run([f"./{gradlew.name}", *tasks], capture_output=True, text=True)
+    stdout = getattr(result, "stdout", "") or ""
+    stderr = getattr(result, "stderr", "") or ""
+    if stdout:
+        print(stdout)
+    if stderr:
+        print(stderr, file=sys.stderr)
     if result.returncode != 0:
-        raise RuntimeError("Build validation failed for affected extensions")
+        raise RuntimeError(f"Build validation failed for affected extensions\n{stdout}\n{stderr}")
+
+
+def validate_and_isolate_affected_builds(
+    validation_units: set[str],
+    protected_units: list[str],
+    upstream_ref: str,
+    bumped: list[str],
+    previous_versions: dict[str, ExtensionVersion | None],
+) -> tuple[set[str], dict[str, dict[str, object]]]:
+    """Validate builds and isolate incompatible extensions to avoid blocking upstream sync."""
+    gradlew = Path("gradlew")
+    candidate_units = set(validation_units)
+    isolated_incompatibilities: dict[str, dict[str, object]] = {}
+
+    if not candidate_units:
+        return candidate_units, isolated_incompatibilities
+
+    protected_set = set(protected_units)
+    max_isolation_passes = 10
+    current_pass = 0
+
+    while candidate_units and current_pass < max_isolation_passes:
+        current_pass += 1
+        try:
+            validate_affected_builds(sorted(candidate_units))
+            print(f"Validation successful: {len(candidate_units)} extension(s) compiled without errors.")
+            break
+        except RuntimeError as err:
+            err_text = str(err)
+            failures = parse_gradle_failures(err_text)
+
+            if not failures:
+                for u in sorted(candidate_units):
+                    if u in err_text:
+                        failures[u] = {
+                            "unit": u,
+                            "cause": "Compilation error detected in module",
+                            "evidence": err_text[:1000],
+                            "incompatibility_type": "KOTLIN_COMPILATION_ERROR",
+                        }
+                        break
+
+            if not failures:
+                raise
+
+            if "core" in failures or "compiler" in failures:
+                raise StructuralIncompatibilityError(
+                    "Core library structural failure detected",
+                    failed_units=list(failures.keys()),
+                )
+
+            if len(failures) >= 20 and len(failures) > len(candidate_units) * 0.4:
+                raise StructuralIncompatibilityError(
+                    f"Widespread compilation failure across {len(failures)} modules",
+                    failed_units=list(failures.keys()),
+                )
+
+            newly_isolated = False
+            for failed_unit, fail_info in failures.items():
+                dependents = find_dependents_of_module(failed_unit)
+                units_to_isolate = {failed_unit} | {dep for dep, _ in dependents if dep in candidate_units}
+
+                for unit_to_iso in units_to_isolate:
+                    if unit_to_iso not in candidate_units and unit_to_iso not in protected_set:
+                        continue
+
+                    print(f"ISOLATING_INCOMPATIBLE: Isolating {unit_to_iso} due to: {fail_info['cause']}")
+                    last_func = previous_versions.get(unit_to_iso) or effective_version_code("HEAD", unit_to_iso)
+                    last_func_dict = {
+                        "raw": last_func.raw,
+                        "lib": last_func.lib,
+                        "name": last_func.name,
+                        "android_code": last_func.android_code,
+                    } if last_func else None
+
+                    if path_exists("HEAD", unit_to_iso):
+                        git("restore", "--source=HEAD", "--staged", "--worktree", "--", unit_to_iso)
+                    else:
+                        git("rm", "-r", "--cached", "--ignore-unmatch", "--quiet", "--", unit_to_iso)
+                        shutil.rmtree(unit_to_iso, ignore_errors=True)
+
+                    bumped[:] = [b for b in bumped if not b.startswith(f"{unit_to_iso} ")]
+                    candidate_units.discard(unit_to_iso)
+                    newly_isolated = True
+
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    next_iso = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+                    prev_deferrals = load_deferred_incompatibilities()
+                    prev_entry = prev_deferrals.get(unit_to_iso, {})
+                    attempts = int(prev_entry.get("attempts", 0)) + 1
+
+                    isolated_incompatibilities[unit_to_iso] = {
+                        "module": unit_to_iso,
+                        "upstream_commit": git("rev-parse", upstream_ref).strip()[:10],
+                        "cause": fail_info["cause"],
+                        "dependencies": [f":{dep.replace('/', ':')}" for dep, _ in dependents] or [":core"],
+                        "incompatibility_type": fail_info["incompatibility_type"],
+                        "last_functional_version": last_func_dict,
+                        "recovery_state": "DEFERRED_INCOMPATIBLE",
+                        "attempts": attempts,
+                        "last_attempt_at": now_iso,
+                        "next_attempt_at": next_iso,
+                        "compilation_evidence": fail_info["evidence"][:2000],
+                    }
+
+            if not newly_isolated:
+                raise
+
+    return candidate_units, isolated_incompatibilities
 
 
 def get_protected_nox_units(base: str, upstream_ref: str) -> list[str]:
@@ -1760,7 +2023,10 @@ def _apply_units(
         git("merge", "--abort", check=False)
         sys.exit(1)
 
-    lib_lag_errors = validate_no_lib_lag(upstream_ref, ignored_units=blocked_theme_extensions | deferred_units)
+    lib_lag_errors = validate_no_lib_lag(
+        upstream_ref,
+        ignored_units=blocked_theme_extensions | deferred_units | set(load_deferred_incompatibilities().keys()),
+    )
     if lib_lag_errors:
         print("P0 libVersion validation failed (Nox lagging behind upstream):")
         for error in lib_lag_errors:
@@ -1769,37 +2035,87 @@ def _apply_units(
         sys.exit(1)
 
     try:
-        validate_affected_builds(sorted(validation_units))
+        valid_units, newly_isolated = validate_and_isolate_affected_builds(
+            validation_units, protected_units, upstream_ref, bumped, previous_versions
+        )
+    except StructuralIncompatibilityError as error:
+        print(f"Structural incompatibility: {error}")
+        git("merge", "--abort", check=False)
+        sys.exit(1)
     except RuntimeError as error:
         print(str(error))
         git("merge", "--abort", check=False)
         sys.exit(1)
 
+    all_incompatibilities = load_deferred_incompatibilities()
+    for recovered_unit in list(all_incompatibilities.keys()):
+        if recovered_unit in valid_units:
+            print(f"RECOVERED_INCOMPATIBLE: {recovered_unit} compiled successfully and is recovered!")
+            del all_incompatibilities[recovered_unit]
+
+    all_incompatibilities.update(newly_isolated)
+    if write_deferred_incompatibilities(all_incompatibilities):
+        git("add", "--", str(DEFERRED_INCOMPATIBILITIES_FILE))
+
+    sync_state = "SYNCED"
+    if newly_isolated:
+        sync_state = "PARTIALLY_SYNCED" if valid_units else "DEFERRED_INCOMPATIBLE"
+
     commit_msg = "Sync upstream"
+    if sync_state == "PARTIALLY_SYNCED":
+        commit_msg += f" (partially synced, {len(newly_isolated)} incompatible deferred)"
+    elif sync_state == "DEFERRED_INCOMPATIBLE":
+        commit_msg += f" (all {len(newly_isolated)} updates deferred due to incompatibilities)"
+
     if bumped:
         commit_msg += "\n\nNox-resolved conflicts touched by upstream:\n" + "\n".join(f"  - {b}" for b in bumped)
 
+    if newly_isolated:
+        commit_msg += "\n\nDeferred incompatible extensions:\n" + "\n".join(
+            f"  - {u}: {info['cause']} ({info['incompatibility_type']})"
+            for u, info in newly_isolated.items()
+        )
+
     if not has_staged_changes() and not merge_in_progress():
         print("No sync changes to commit")
-        return bumped
+        return ApplyUnitsResult(bumped, deferred_incompatibilities=all_incompatibilities, state=sync_state)
 
     git("commit", "-m", commit_msg)
-    return bumped
+    return ApplyUnitsResult(bumped, deferred_incompatibilities=all_incompatibilities, state=sync_state)
 
 
-def _write_step_summary(protected_units: list[str], bumped: list[str]) -> None:
+def _write_step_summary(
+    protected_units: list[str],
+    bumped: list[str],
+    deferred_incompatibilities: dict[str, dict[str, object]] | None = None,
+    sync_state: str = "SYNCED",
+) -> None:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if not summary_path or not protected_units:
+    if not summary_path:
         return
-    lines = ["\n## Nox Protected Extensions\n\n"]
-    for unit in protected_units:
-        tag = next((b for b in bumped if b.startswith(unit)), None)
-        if tag:
-            ver = tag.split("=")[1]
-            lines.append(f"- `{unit}` (kept Nox code, bumped to `{ver}`)\n")
-        else:
-            lines.append(f"- `{unit}` (kept Nox code, version already ahead)\n")
-    with open(summary_path, "a") as f:
+    lines = [f"\n## Keiyoushi Sync Shield — Status: `{sync_state}`\n\n"]
+    if protected_units:
+        lines.append("### Nox Protected Extensions\n\n")
+        for unit in protected_units:
+            tag = next((b for b in bumped if b.startswith(unit)), None)
+            if tag:
+                ver = tag.split("=")[1]
+                lines.append(f"- `{unit}` (kept Nox code, bumped to `{ver}`)\n")
+            else:
+                lines.append(f"- `{unit}` (kept Nox code, version already ahead)\n")
+
+    if deferred_incompatibilities:
+        lines.append("\n### Deferred Incompatible Modules\n\n")
+        lines.append("| Module | Type | Cause | Recovery State | Attempts |\n")
+        lines.append("|---|---|---|---|---|\n")
+        for mod, info in sorted(deferred_incompatibilities.items()):
+            lines.append(
+                f"| `{mod}` | `{info.get('incompatibility_type', 'N/A')}` | {info.get('cause', 'N/A')} | "
+                f"`{info.get('recovery_state', 'DEFERRED_INCOMPATIBLE')}` | {info.get('attempts', 1)} |\n"
+            )
+
+    with open(summary_path, "a", encoding="utf-8") as f:
+        f.writelines(lines)
         f.writelines(lines)
 
 
@@ -1885,6 +2201,28 @@ def main() -> None:
     git("fetch", UPSTREAM_REMOTE, UPSTREAM_BRANCH)
 
     upstream_ref = f"{UPSTREAM_REMOTE}/{UPSTREAM_BRANCH}"
+    upstream_head = git("rev-parse", upstream_ref).strip()
+
+    signatures = load_failure_signatures()
+    if (
+        signatures
+        and signatures.get("local_head") == sync_head
+        and signatures.get("upstream_head") == upstream_head
+    ):
+        recorded_state = signatures.get("state", "BLOCKED_STRUCTURAL")
+        skip_count = signatures.get("skip_count", 0) + 1
+        signatures["skip_count"] = skip_count
+        write_failure_signatures(signatures)
+        print("==================================================")
+        print("DEDUPLICATED DETERMINISTIC FAILURE DETECTED")
+        print(f"State: {recorded_state}")
+        print(f"Cause: {signatures.get('cause')}")
+        print(f"Inputs unchanged (local={sync_head[:10]}, upstream={upstream_head[:10]}). Skip count: {skip_count}")
+        print("Skipping redundant full build to avoid CI failure loops.")
+        print("==================================================")
+        print_observability_footer(recorded_state, "SKIPPED", "SKIPPED")
+        return
+
     base = git("merge-base", "HEAD", upstream_ref).strip()
 
     upstream_entries = changed_entries(base, upstream_ref)
@@ -1902,6 +2240,9 @@ def main() -> None:
     for theme in load_deferred_migrations():
         unit = f"lib-multisrc/{theme}"
         if path_exists(upstream_ref, unit):
+            upstream_units.append(unit)
+    for unit in load_deferred_incompatibilities():
+        if path_exists(upstream_ref, unit) or path_exists(None, unit):
             upstream_units.append(unit)
     upstream_units = sorted(set(upstream_units))
     conflict_units = sorted(set(upstream_units) & set(main_units))
@@ -1973,16 +2314,27 @@ def main() -> None:
             updated_units.append(unit)
 
     core_changed = any(
-        path in {"core", "common"} or path.startswith(("core/", "common/", "gradle/"))
+        path in {"core", "common", "compiler"} or path.startswith(("core/", "common/", "compiler/", "gradle/"))
         for _, paths in upstream_entries
         for path in paths
     )
+    if core_changed:
+        for pu in protected_units:
+            if pu.startswith("src/") and path_exists(None, pu):
+                upstream_units.append(pu)
+        upstream_units = sorted(set(upstream_units))
+
     multisrc_changed = any(
         path.startswith("lib-multisrc/")
         for _, paths in upstream_entries
         for path in paths
     )
-    no_changes = (not upstream_units and not load_deferred_migrations() and not effective_diff)
+    no_changes = (
+        not upstream_units
+        and not load_deferred_migrations()
+        and not load_deferred_incompatibilities()
+        and not effective_diff
+    )
 
     trigger = os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch")
     local_head = git("rev-parse", "HEAD").strip()
@@ -2036,29 +2388,63 @@ def main() -> None:
     }
     # Only pre-flight-approved protected selector migrations may be applied.
     structural_units = sorted(migration_units)
-    bumped = apply_units(
-        upstream_ref,
-        upstream_units,
-        conflict_set,
+    try:
+        bumped = apply_units(
+            upstream_ref,
+            upstream_units,
+            conflict_set,
+            protected_units,
+            structural_units,
+            blocked,
+            deferred,
+            proven,
+        )
+    except StructuralIncompatibilityError as error:
+        print(f"Structural incompatibility: {error}", file=sys.stderr)
+        sig = compute_deterministic_signature(
+            local_head, upstream_head, "BLOCKED_STRUCTURAL", error.failed_units, str(error)
+        )
+        write_failure_signatures({
+            "last_signature": sig,
+            "local_head": local_head,
+            "upstream_head": upstream_head,
+            "state": "BLOCKED_STRUCTURAL",
+            "failed_units": error.failed_units,
+            "cause": str(error),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "skip_count": 0,
+        })
+        if merge_in_progress():
+            git("merge", "--abort", check=False)
+        print_observability_footer("BLOCKED_STRUCTURAL", "SKIPPED", "SKIPPED")
+        sys.exit(1)
+
+    sync_state = getattr(bumped, "state", "SYNCED")
+    deferred_incompats = getattr(bumped, "deferred_incompatibilities", {})
+
+    if FAILURE_SIGNATURES_FILE.exists():
+        FAILURE_SIGNATURES_FILE.unlink()
+
+    _write_step_summary(
         protected_units,
-        structural_units,
-        blocked,
-        deferred,
-        proven,
+        bumped,
+        deferred_incompatibilities=deferred_incompats,
+        sync_state=sync_state,
     )
-    _write_step_summary(protected_units, bumped)
     print(f"Commit Sync upstream: {git('rev-parse', 'HEAD').strip()}")
     if args.push:
         try:
             publish_sync(upstream_ref, start_main)
-            print_observability_footer("SUCCESS", "SUCCESS", "TRIGGERED")
+            out_result = "SUCCESS" if sync_state == "SYNCED" else sync_state
+            print_observability_footer(out_result, "SUCCESS", "TRIGGERED")
         except RuntimeError as error:
             print(f"Publish aborted: {error}", file=sys.stderr)
             print_observability_footer("FAILED", "FAILED", "FAILED")
             sys.exit(1)
     else:
+        out_result = "SUCCESS" if sync_state == "SYNCED" else sync_state
         print("Applied and validated locally; no push requested")
-        print_observability_footer("SUCCESS", "SKIPPED", "SKIPPED")
+        print_observability_footer(out_result, "SKIPPED", "SKIPPED")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -2198,6 +2199,277 @@ class UpstreamBatchAndObservabilityTest(unittest.TestCase):
             units, _ = sync_upstream.collect_units(entries)
 
             self.assertEqual(sorted(units), ["src/en/updext", "src/pt/newext", "src/vi/delext"])
+
+
+class KeiyoushiSyncShieldRegressionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory(prefix="shield-test-")
+        self.repo = Path(self.tmpdir.name)
+        self.prev = Path.cwd()
+        os.chdir(self.repo)
+
+        def git(*args):
+            res = subprocess.run(["git", *args], cwd=self.repo, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"git {' '.join(args)} failed: {res.stderr}")
+            return res.stdout.strip()
+
+        self.git = git
+        self.git("init", "-b", "main")
+        self.git("config", "user.name", "Nox Guard")
+        self.git("config", "user.email", "guard@project-nox.test")
+
+    def tearDown(self):
+        os.chdir(self.prev)
+        self.tmpdir.cleanup()
+
+    def test_case_a_bookorbit_ksp_incompatibility_detected(self):
+        """Caso A: BookOrbit KSP codegen mismatch (defaultUrl vs hardcodedUrl) detected and isolated."""
+        unit = "src/all/bookorbit"
+        (self.repo / unit).mkdir(parents=True)
+        (self.repo / f"{unit}/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 1\n')
+        self.git("add", ".")
+        self.git("commit", "-m", "initial bookorbit")
+
+        simulated_ksp_error = (
+            "Execution failed for task ':src:all:bookorbit:kspReleaseKotlin'.\n"
+            "e: file:///repo/src/all/bookorbit/build/generated/ksp/release/kotlin/keiyoushi/source/Generated.kt:12:7 "
+            "No value passed for parameter 'hardcodedUrl'. Found 'defaultUrl'.\n"
+        )
+        failures = sync_upstream.parse_gradle_failures(simulated_ksp_error)
+        self.assertIn("src/all/bookorbit", failures)
+        self.assertEqual(failures["src/all/bookorbit"]["incompatibility_type"], "KSP_CODEGEN_ERROR")
+        self.assertIn("hardcodedUrl", failures["src/all/bookorbit"]["cause"])
+
+    def test_case_b_animexnovel_fetch_api_incompatibility_isolated(self):
+        """Caso B: AnimeXNovel Fetch API incompatibility does NOT block independent valid updates."""
+        (self.repo / ".github").mkdir(parents=True)
+        (self.repo / ".github/nox-protected.txt").write_text("src/pt/animexnovel\n")
+
+        # Initial commit on main: AnimeXNovel v20 and ValidExt v1
+        (self.repo / "src/pt/animexnovel").mkdir(parents=True)
+        (self.repo / "src/pt/animexnovel/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 20\n')
+        (self.repo / "src/pt/animexnovel/src/eu/kanade/tachiyomi/extension/pt/animexnovel").mkdir(parents=True)
+        (self.repo / "src/pt/animexnovel/src/eu/kanade/tachiyomi/extension/pt/animexnovel/AnimeXNovel.kt").write_text(
+            "class AnimeXNovel { fun run() { client.get(baseUrl) } }\n"
+        )
+
+        (self.repo / "src/pt/validext").mkdir(parents=True)
+        (self.repo / "src/pt/validext/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 1\n')
+        self.git("add", ".")
+        self.git("commit", "-m", "base commit")
+
+        # Create upstream branch with new validext v2 and upstream animexnovel
+        self.git("checkout", "-b", "upstream")
+        (self.repo / "src/pt/validext/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 2\n')
+        (self.repo / "src/pt/animexnovel/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 21\n')
+        self.git("add", ".")
+        self.git("commit", "-m", "upstream batch")
+
+        # Back to main
+        self.git("checkout", "main")
+
+        simulated_output = (
+            "Execution failed for task ':src:pt:animexnovel:compileReleaseKotlin'.\n"
+            "e: file:///repo/src/pt/animexnovel/src/eu/kanade/tachiyomi/extension/pt/animexnovel/AnimeXNovel.kt:1:35 "
+            "No value passed for parameter 'fetch'.\n"
+        )
+
+        def mock_validate(units):
+            if "src/pt/animexnovel" in units:
+                raise RuntimeError(simulated_output)
+            return None
+
+        with patch.object(sync_upstream, "validate_affected_builds", side_effect=mock_validate):
+            result = sync_upstream.apply_units(
+                "upstream",
+                ["src/pt/animexnovel", "src/pt/validext"],
+                {"src/pt/animexnovel"},
+                ["src/pt/animexnovel"],
+                [],
+                set(),
+                {},
+            )
+
+        self.assertEqual(result.state, "PARTIALLY_SYNCED")
+        self.assertIn("src/pt/animexnovel", result.deferred_incompatibilities)
+        self.assertEqual(
+            result.deferred_incompatibilities["src/pt/animexnovel"]["incompatibility_type"],
+            "API_SIGNATURE_MISMATCH",
+        )
+
+        # Confirm that animexnovel remained at its last functional version (20), not bumped
+        animex_gradle = (self.repo / "src/pt/animexnovel/build.gradle.kts").read_text()
+        self.assertIn("versionCode = 20", animex_gradle)
+
+        # Confirm that validext was updated and committed to main
+        valid_gradle = (self.repo / "src/pt/validext/build.gradle.kts").read_text()
+        self.assertIn("versionCode = 2", valid_gradle)
+
+        # Confirm durable JSON record was created
+        deffile = self.repo / ".github/sync-deferred-incompatibilities.json"
+        self.assertTrue(deffile.exists())
+        data = json.loads(deffile.read_text())
+        self.assertIn("src/pt/animexnovel", data["incompatibilities"])
+
+    def test_case_c_large_batch_mixed_updates_and_isolation(self):
+        """Caso C: Large batch with new, modified, removed, shared lib, protected, and isolated incompatible."""
+        (self.repo / ".github").mkdir(parents=True)
+        (self.repo / ".github/nox-protected.txt").write_text("src/pt/myprotected\n")
+
+        # Initial commit:
+        # - src/en/modext (to be modified)
+        # - src/vi/deadext (to be removed)
+        # - src/pt/myprotected (protected Nox extension)
+        # - lib/sharedutils (shared lib)
+        (self.repo / "src/en/modext").mkdir(parents=True)
+        (self.repo / "src/en/modext/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 5\n')
+        (self.repo / "src/vi/deadext").mkdir(parents=True)
+        (self.repo / "src/vi/deadext/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 1\n')
+        (self.repo / "src/pt/myprotected").mkdir(parents=True)
+        (self.repo / "src/pt/myprotected/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 10\n')
+        (self.repo / "lib/sharedutils").mkdir(parents=True)
+        (self.repo / "lib/sharedutils/build.gradle.kts").write_text('// shared lib v1\n')
+
+        self.git("add", ".")
+        self.git("commit", "-m", "base")
+
+        # Upstream branch
+        self.git("checkout", "-b", "upstream")
+        # - new extension: src/all/newext
+        (self.repo / "src/all/newext").mkdir(parents=True)
+        (self.repo / "src/all/newext/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 1\n')
+        # - modified: modext v6
+        (self.repo / "src/en/modext/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 6\n')
+        # - removed: deadext
+        self.git("rm", "-r", "src/vi/deadext")
+        # - shared lib updated
+        (self.repo / "lib/sharedutils/build.gradle.kts").write_text('// shared lib v2\n')
+        # - upstream touches protected: bumps to v11
+        (self.repo / "src/pt/myprotected/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 11\n')
+        # - incompatible extension added upstream
+        (self.repo / "src/es/brokenext").mkdir(parents=True)
+        (self.repo / "src/es/brokenext/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 1\n')
+
+        self.git("add", ".")
+        self.git("commit", "-m", "upstream batch")
+        self.git("checkout", "main")
+
+        def mock_validate(units):
+            if "src/es/brokenext" in units:
+                raise RuntimeError(
+                    "Execution failed for task ':src:es:brokenext:compileReleaseKotlin'.\n"
+                    "e: file:///repo/src/es/brokenext/Source.kt:1:1 Syntax error: unresolved reference\n"
+                )
+            return None
+
+        with patch.object(sync_upstream, "validate_affected_builds", side_effect=mock_validate):
+            result = sync_upstream.apply_units(
+                "upstream",
+                ["src/all/newext", "src/en/modext", "src/vi/deadext", "lib/sharedutils", "src/pt/myprotected", "src/es/brokenext"],
+                {"src/pt/myprotected"},
+                ["src/pt/myprotected"],
+                [],
+                set(),
+                {},
+            )
+
+        self.assertEqual(result.state, "PARTIALLY_SYNCED")
+        self.assertIn("src/es/brokenext", result.deferred_incompatibilities)
+
+        # Assert valid components succeeded and are committed:
+        self.assertTrue((self.repo / "src/all/newext").exists())
+        self.assertIn("versionCode = 6", (self.repo / "src/en/modext/build.gradle.kts").read_text())
+        self.assertFalse((self.repo / "src/vi/deadext").exists())
+        self.assertIn("shared lib v2", (self.repo / "lib/sharedutils/build.gradle.kts").read_text())
+        # Protected was bumped monotonically
+        self.assertIn("versionCode = 12", (self.repo / "src/pt/myprotected/build.gradle.kts").read_text())
+        # Incompatible was isolated and deleted since it was newly introduced
+        self.assertFalse((self.repo / "src/es/brokenext").exists())
+
+    def test_case_d_recovery_of_deferred_extension(self):
+        """Caso D: Previously deferred extension automatically recovers after incompatibility is fixed."""
+        unit = "src/pt/animexnovel"
+        (self.repo / ".github").mkdir(parents=True)
+        (self.repo / ".github/nox-protected.txt").write_text(f"{unit}\n")
+
+        # Set up registry with animexnovel as deferred
+        sync_upstream.write_deferred_incompatibilities({
+            unit: {
+                "module": unit,
+                "upstream_commit": "abc1234",
+                "cause": "No value passed for parameter 'fetch'",
+                "dependencies": [":core"],
+                "incompatibility_type": "API_SIGNATURE_MISMATCH",
+                "last_functional_version": {"raw": 20, "lib": "1.6", "name": "1.6.20", "android_code": 106020},
+                "recovery_state": "DEFERRED_INCOMPATIBLE",
+                "attempts": 1,
+            }
+        })
+
+        (self.repo / unit).mkdir(parents=True)
+        (self.repo / f"{unit}/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 20\n')
+        self.git("add", ".")
+        self.git("commit", "-m", "base with deferred animexnovel")
+
+        # Upstream has animexnovel at v21
+        self.git("checkout", "-b", "upstream")
+        (self.repo / f"{unit}/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 21\n')
+        self.git("add", ".")
+        self.git("commit", "-m", "upstream v21")
+        self.git("checkout", "main")
+
+        # Now validation passes cleanly (simulating developer fixing the code)
+        with patch.object(sync_upstream, "validate_affected_builds", return_value=None):
+            result = sync_upstream.apply_units(
+                "upstream",
+                [unit],
+                {unit},
+                [unit],
+                [],
+                set(),
+                {},
+            )
+
+        self.assertEqual(result.state, "SYNCED")
+        # Incompatibility is recovered and removed from registry
+        self.assertNotIn(unit, result.deferred_incompatibilities)
+        self.assertEqual(sync_upstream.load_deferred_incompatibilities(), {})
+        # Version was bumped to 22
+        self.assertIn("versionCode = 22", (self.repo / f"{unit}/build.gradle.kts").read_text())
+
+    def test_case_e_idempotency_and_signature_deduplication(self):
+        """Caso E: Idempotency with zero duplicate commits and deterministic failure deduplication."""
+        (self.repo / "src/all/sample").mkdir(parents=True)
+        (self.repo / "src/all/sample/build.gradle.kts").write_text('libVersion = "1.6"\nversionCode = 1\n')
+        self.git("add", ".")
+        self.git("commit", "-m", "base")
+        head = self.git("rev-parse", "HEAD")
+
+        # 1. Signature deduplication test
+        sync_upstream.write_failure_signatures({
+            "local_head": head,
+            "upstream_head": head,
+            "state": "BLOCKED_STRUCTURAL",
+            "cause": "Core API structural breakage",
+            "skip_count": 0,
+        })
+
+        with patch("sys.exit") as mock_exit, patch("sys.argv", ["sync-upstream.py", "--dry-run"]):
+            with patch.object(sync_upstream, "git", side_effect=lambda *args, **kw: head if "rev-parse" in args else ""):
+                with patch.object(sync_upstream, "ensure_clean_tree"), patch.object(sync_upstream, "ensure_upstream_remote"):
+                    sync_upstream.main()
+                    mock_exit.assert_not_called()
+
+        signatures = sync_upstream.load_failure_signatures()
+        self.assertEqual(signatures["skip_count"], 1)
+
+        # 2. When upstream advances to a new commit, signature is bypassed
+        with patch("sys.argv", ["sync-upstream.py", "--dry-run"]):
+            with patch.object(sync_upstream, "git", side_effect=lambda *args, **kw: "new_upstream_commit" if "upstream/main" in args else head):
+                with patch.object(sync_upstream, "ensure_clean_tree"), patch.object(sync_upstream, "ensure_upstream_remote"), patch.object(sync_upstream, "changed_entries", return_value=[]):
+                    sync_upstream.main()
+                    # Signature was bypassed because upstream_head differed!
 
 
 if __name__ == "__main__":

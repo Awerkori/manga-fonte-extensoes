@@ -83,6 +83,10 @@ jobs:
 
             if grep -q "Push origin/main: PASS" "$SYNC_LOG"; then
               RETRY_DECISION="NO_RETRY: Tentativa já publicada em origin/main"
+            elif grep -q "DEDUPLICATED DETERMINISTIC FAILURE DETECTED" "$SYNC_LOG"; then
+              RETRY_DECISION="NO_RETRY: Falha determinística já diagnosticada"
+            elif grep -q "BLOCKED_STRUCTURAL" "$SYNC_LOG"; then
+              RETRY_DECISION="NO_RETRY: Bloqueio estrutural de API ou core"
             elif grep -q -E "origin/main advanced during sync|HEAD is not based on the fetched origin/main|Updates were rejected because the remote contains work that you do not have locally|\[rejected\].*fetch first|\[rejected\].*non-fast-forward" "$SYNC_LOG"; then
               RETRY_DECISION="RETRY: origin/main avançou durante a sincronização"
             elif grep -q -E "(^e: .*:|[[:space:]]Compilation error[[:space:]])" "$SYNC_LOG"; then
