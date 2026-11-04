@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
@@ -57,7 +58,7 @@ abstract class OneReader : KeiSource() {
 
     private val apiBaseUrl = baseUrl.toHttpUrl()
 
-    override suspend fun getPopularManga(page: Int): MangasPage = client.get(apiUrl("api", "reader", "home"))
+    override suspend fun getPopularManga(page: Int): MangasPage = client.get(apiUrl("api", "reader", "home"), Fetch.XHR)
         .parseAs<HomeDto>().toPopularPage()
 
     override suspend fun getLatestUpdates(page: Int): MangasPage {
@@ -67,7 +68,7 @@ abstract class OneReader : KeiSource() {
             .addQueryParameter("filter", "all")
             .build()
 
-        return client.get(url).parseAs<UpdatesDto>().toMangasPage()
+        return client.get(url, Fetch.XHR).parseAs<UpdatesDto>().toMangasPage()
     }
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
@@ -97,7 +98,7 @@ abstract class OneReader : KeiSource() {
             .apply { if (genre.isNotBlank()) addQueryParameter("genre", genre) }
             .build()
 
-        return client.get(url).parseAs<CatalogDto>().toMangasPage()
+        return client.get(url, Fetch.XHR).parseAs<CatalogDto>().toMangasPage()
     }
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
@@ -124,7 +125,7 @@ abstract class OneReader : KeiSource() {
     ): SMangaUpdate = coroutineScope {
         val updatedManga = if (fetchDetails) {
             async {
-                client.get(apiUrl("api", "reader", "works", manga.url))
+                client.get(apiUrl("api", "reader", "works", manga.url), Fetch.XHR)
                     .parseAs<WorkDetailsDto>().work.toSManga(details = true)
             }
         } else {
@@ -133,7 +134,7 @@ abstract class OneReader : KeiSource() {
 
         val updatedChapters = if (fetchChapters) {
             async {
-                client.get(apiUrl("api", "reader", "works", manga.url))
+                client.get(apiUrl("api", "reader", "works", manga.url), Fetch.XHR)
                     .parseAs<WorkDetailsDto>().chapters
                     .sortedByDescending { it.number }
                     .map { it.toSChapter(manga.url) }
@@ -203,6 +204,7 @@ abstract class OneReader : KeiSource() {
             val response = client.get(
                 manifestUrl,
                 readerHeaders,
+                Fetch.XHR,
                 cacheControl = CacheControl.FORCE_NETWORK,
                 ensureSuccess = false,
             )
@@ -610,7 +612,7 @@ abstract class OneReader : KeiSource() {
     override val supportsFilterFetching get() = true
 
     override suspend fun fetchFilterData(): JsonElement = coroutineScope {
-        val meta = async { client.get(apiUrl("api", "reader", "catalog", "meta")).parseAs<MetaDto>() }
+        val meta = async { client.get(apiUrl("api", "reader", "catalog", "meta"), Fetch.XHR).parseAs<MetaDto>() }
 
         FilterData(
             tags = meta.await().genres.values.flatten().map { it.name }.filter(String::isNotBlank).distinct(),

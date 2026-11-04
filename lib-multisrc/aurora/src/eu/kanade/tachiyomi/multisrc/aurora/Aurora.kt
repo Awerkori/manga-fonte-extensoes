@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.addCookie
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
@@ -58,9 +59,9 @@ abstract class Aurora : KeiSource() {
         .set("Sec-Fetch-User", "?1")
         .set("Alt-Used", baseUrl.substringAfterLast("/"))
 
-    override suspend fun getPopularManga(page: Int) = getMangasPage(client.get("$baseUrl/catalogo"))
+    override suspend fun getPopularManga(page: Int) = getMangasPage(client.get("$baseUrl/catalogo", Fetch.DOCUMENT))
 
-    override suspend fun getLatestUpdates(page: Int) = getMangasPage(client.get("$baseUrl/novidades"))
+    override suspend fun getLatestUpdates(page: Int) = getMangasPage(client.get("$baseUrl/novidades", Fetch.DOCUMENT))
 
     private fun getMangasPage(response: Response): MangasPage {
         val dto = response.extractNextJs<SeriesDto>()
@@ -87,7 +88,7 @@ abstract class Aurora : KeiSource() {
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val document = client.get(getMangaUrl(manga)).asJsoup()
+        val document = client.get(getMangaUrl(manga), Fetch.DOCUMENT).asJsoup()
 
         val manga = getSMangaDetails(document, manga)
         val chapters = document.extractNextJs<ChapterListDto>()
@@ -131,17 +132,17 @@ abstract class Aurora : KeiSource() {
             }
         }
 
-        var payload = read(client.get(chapterUrl, readerHeaders(chapter), ensureSuccess = false))
+        var payload = read(client.get(chapterUrl, readerHeaders(chapter), Fetch.DOCUMENT, ensureSuccess = false))
         if (payload.gated) {
             val response = unlockReader(client, chapterUrl, readerHeaders(chapter, rsc = false), gateTiming)
             counts["gate"] = 1
             payload = read(response)
             if (payload.urls.isEmpty()) {
-                payload = read(client.get(chapterUrl, readerHeaders(chapter, rsc = true), ensureSuccess = false))
+                payload = read(client.get(chapterUrl, readerHeaders(chapter, rsc = true), Fetch.DOCUMENT, ensureSuccess = false))
             }
         }
         if (payload.urls.isEmpty() && !payload.gated && status in 200..299) {
-            payload = read(client.get(chapterUrl, readerHeaders(chapter, rsc = false), ensureSuccess = false))
+            payload = read(client.get(chapterUrl, readerHeaders(chapter, rsc = false), Fetch.DOCUMENT, ensureSuccess = false))
         }
         if (payload.urls.isEmpty()) readerFailure(name, chapterUrl, status, counts)
 
@@ -177,7 +178,7 @@ abstract class Aurora : KeiSource() {
             .set("Sec-Fetch-Dest", "empty")
             .set("Sec-Fetch-Site", "same-origin")
             .build()
-        val response = client.get("$baseUrl/api/atfield/key?v=$v&e=$e", keyHeaders, ensureSuccess = false)
+        val response = client.get("$baseUrl/api/atfield/key?v=$v&e=$e", keyHeaders, Fetch.XHR, ensureSuccess = false)
         if (!response.isSuccessful) {
             val errorBody = response.body.string()
             error("Aurora reader key: $chapterUrl status=${response.code} error=${errorBody.take(100)}")

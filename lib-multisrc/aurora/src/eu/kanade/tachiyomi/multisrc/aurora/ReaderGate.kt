@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.multisrc.aurora
 
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.post
 import keiyoushi.utils.parseAs
@@ -81,6 +82,7 @@ internal suspend fun unlockReader(client: OkHttpClient, chapterUrl: String, head
     val gateResponse = client.post(
         "$baseUrl/api/gate/start",
         gateHeaders,
+        Fetch.XHR,
         GateRequest(chapter.encodedPath).toJsonRequestBody(),
         ensureSuccess = false,
     )
@@ -90,11 +92,12 @@ internal suspend fun unlockReader(client: OkHttpClient, chapterUrl: String, head
             val unlockResponse = client.post(
                 "$baseUrl/api/reader/unlock",
                 gateHeaders,
+                Fetch.XHR,
                 GateRequest(chapter.encodedPath).toJsonRequestBody(),
                 ensureSuccess = false,
             )
             unlockResponse.close()
-            return client.get(chapterUrl, headers, ensureSuccess = false)
+            return client.get(chapterUrl, headers, Fetch.DOCUMENT, ensureSuccess = false)
         }
         error("Aurora reader gate start: $chapterUrl status=${gateResponse.code} error=${errorBody.take(100)}")
     }
@@ -105,6 +108,6 @@ internal suspend fun unlockReader(client: OkHttpClient, chapterUrl: String, head
     val callbackHeaders = buildGateCallbackHeaders(headers, chapterUrl)
 
     return timing.complete(gate.minWaitSeconds, issued::elapsedNow) {
-        client.get(callback, callbackHeaders, ensureSuccess = false)
+        client.get(callback, callbackHeaders, Fetch.XHR, ensureSuccess = false)
     }
 }

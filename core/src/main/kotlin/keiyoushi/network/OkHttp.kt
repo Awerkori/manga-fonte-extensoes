@@ -338,3 +338,70 @@ suspend fun OkHttpClient.head(
     cacheControl: CacheControl = DEFAULT_CACHE_CONTROL,
     ensureSuccess: Boolean = true,
 ): Response = head(url, source.headers, cacheControl, ensureSuccess)
+
+/**
+ * Backwards compatibility for Nox extensions not yet adapted to Fetch parameter.
+ */
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+suspend fun OkHttpClient.get(
+    url: HttpUrl,
+    headers: Headers,
+    cacheControl: CacheControl = DEFAULT_CACHE_CONTROL,
+    ensureSuccess: Boolean = true,
+): Response = get(url, headers, Fetch.NONE, cacheControl, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+suspend fun OkHttpClient.get(
+    url: String,
+    headers: Headers,
+    cacheControl: CacheControl = DEFAULT_CACHE_CONTROL,
+    ensureSuccess: Boolean = true,
+): Response = get(url.toHttpUrl(), headers, Fetch.NONE, cacheControl, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+context(source: HttpSource)
+suspend fun OkHttpClient.get(
+    url: HttpUrl,
+    cacheControl: CacheControl = DEFAULT_CACHE_CONTROL,
+    ensureSuccess: Boolean = true,
+): Response = get(url, source.headers, Fetch.NONE, cacheControl, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+context(source: HttpSource)
+suspend fun OkHttpClient.get(
+    url: String,
+    cacheControl: CacheControl = DEFAULT_CACHE_CONTROL,
+    ensureSuccess: Boolean = true,
+): Response = get(url.toHttpUrl(), source.headers, Fetch.NONE, cacheControl, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+suspend fun OkHttpClient.post(
+    url: HttpUrl,
+    headers: Headers,
+    body: RequestBody,
+    ensureSuccess: Boolean = true,
+): Response = post(url, headers, Fetch.NONE, body, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+suspend fun OkHttpClient.post(
+    url: String,
+    headers: Headers,
+    body: RequestBody,
+    ensureSuccess: Boolean = true,
+): Response = post(url.toHttpUrl(), headers, Fetch.NONE, body, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+context(source: HttpSource)
+suspend fun OkHttpClient.post(
+    url: HttpUrl,
+    body: RequestBody,
+    ensureSuccess: Boolean = true,
+): Response = post(url, source.headers, Fetch.NONE, body, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+context(source: HttpSource)
+suspend fun OkHttpClient.post(
+    url: String,
+    body: RequestBody,
+    ensureSuccess: Boolean = true,
+): Response = post(url.toHttpUrl(), source.headers, Fetch.NONE, body, ensureSuccess)

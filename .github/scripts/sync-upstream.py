@@ -218,7 +218,7 @@ def _read_file_text(ref: str | None, path: str) -> str | None:
         capture_output=True,
         text=True,
     )
-    return result.stdout if result.returncode == 0 else None
+    return getattr(result, "stdout", "") if result.returncode == 0 else None
 
 
 def read_base_version_code(ref: str | None, theme: str) -> int:
@@ -1208,6 +1208,87 @@ def prune_project_dependency_from_build_file(build_file: Path, project_path: str
     return False
 
 
+def ensure_core_compatibility() -> None:
+    """Ensure keiyoushi.network compatibility layer for Nox extensions is intact."""
+    okhttp_file = Path("core/src/main/kotlin/keiyoushi/network/OkHttp.kt")
+    if not okhttp_file.exists():
+        return
+    text = okhttp_file.read_text()
+    marker = "Backwards compatibility for Nox extensions"
+    if marker in text:
+        return
+    compat_code = """
+/**
+ * Backwards compatibility for Nox extensions not yet adapted to Fetch parameter.
+ */
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+suspend fun OkHttpClient.get(
+    url: HttpUrl,
+    headers: Headers,
+    cacheControl: CacheControl = DEFAULT_CACHE_CONTROL,
+    ensureSuccess: Boolean = true,
+): Response = get(url, headers, Fetch.NONE, cacheControl, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+suspend fun OkHttpClient.get(
+    url: String,
+    headers: Headers,
+    cacheControl: CacheControl = DEFAULT_CACHE_CONTROL,
+    ensureSuccess: Boolean = true,
+): Response = get(url.toHttpUrl(), headers, Fetch.NONE, cacheControl, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+context(source: HttpSource)
+suspend fun OkHttpClient.get(
+    url: HttpUrl,
+    cacheControl: CacheControl = DEFAULT_CACHE_CONTROL,
+    ensureSuccess: Boolean = true,
+): Response = get(url, source.headers, Fetch.NONE, cacheControl, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+context(source: HttpSource)
+suspend fun OkHttpClient.get(
+    url: String,
+    cacheControl: CacheControl = DEFAULT_CACHE_CONTROL,
+    ensureSuccess: Boolean = true,
+): Response = get(url.toHttpUrl(), source.headers, Fetch.NONE, cacheControl, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+suspend fun OkHttpClient.post(
+    url: HttpUrl,
+    headers: Headers,
+    body: RequestBody,
+    ensureSuccess: Boolean = true,
+): Response = post(url, headers, Fetch.NONE, body, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+suspend fun OkHttpClient.post(
+    url: String,
+    headers: Headers,
+    body: RequestBody,
+    ensureSuccess: Boolean = true,
+): Response = post(url.toHttpUrl(), headers, Fetch.NONE, body, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+context(source: HttpSource)
+suspend fun OkHttpClient.post(
+    url: HttpUrl,
+    body: RequestBody,
+    ensureSuccess: Boolean = true,
+): Response = post(url, source.headers, Fetch.NONE, body, ensureSuccess)
+
+@Deprecated("Pass a Fetch: DOCUMENT for pages, XHR for API and ajax calls, IMAGE for images, SCRIPT for scripts. NONE only if the request has to go out as built.")
+context(source: HttpSource)
+suspend fun OkHttpClient.post(
+    url: String,
+    body: RequestBody,
+    ensureSuccess: Boolean = true,
+): Response = post(url.toHttpUrl(), source.headers, Fetch.NONE, body, ensureSuccess)
+"""
+    okhttp_file.write_text(text + "\n" + compat_code)
+    run_cmd(["git", "add", "--", str(okhttp_file)], check=False)
+
+
 def validate_affected_builds(units: list[str]) -> None:
     """Compile migrated sources too: source-info alone cannot detect shared API breakage."""
     gradlew = Path("gradlew")
@@ -1942,6 +2023,8 @@ def _apply_units(
 
         if path_exists(upstream_ref, unit):
             git("restore", f"--source={upstream_ref}", "--staged", "--worktree", "--", unit)
+            if unit == "core" or unit.startswith("core/"):
+                ensure_core_compatibility()
             if unit.startswith("src/"):
                 validation_units.add(unit)
                 if bump_after_structural_change(unit, previous_versions.get(unit)):
