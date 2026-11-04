@@ -620,7 +620,7 @@ class ApplyUnitsResult(list):
 
 
 _GRADLE_FAILED_TASK_RE = re.compile(
-    r"(?:> Task |Execution failed for task '):((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler):([a-zA-Z0-9]+)",
+    r"(?:> Task :((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler):([a-zA-Z0-9]+)\s+FAILED|Execution failed for task ':((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler):([a-zA-Z0-9]+)')",
 )
 _KOTLIN_ERROR_RE = re.compile(r"e:\s+file:///(.+?):(\d+):(\d+)\s*(.+)")
 
@@ -630,7 +630,7 @@ def parse_gradle_failures(output: str) -> dict[str, dict[str, object]]:
     failed_units: dict[str, dict[str, object]] = {}
 
     for match in _GRADLE_FAILED_TASK_RE.finditer(output):
-        gradle_module = match.group(1)
+        gradle_module = match.group(1) or match.group(3)
         unit = gradle_module.replace(":", "/")
         if unit not in failed_units:
             failed_units[unit] = {
@@ -640,22 +640,37 @@ def parse_gradle_failures(output: str) -> dict[str, dict[str, object]]:
                 "incompatibility_type": "KOTLIN_COMPILATION_ERROR",
             }
 
-    for match in re.finditer(r"Execution failed for task ':([^:']+):([a-zA-Z0-9]+)'", output):
-        unit = match.group(1).replace(":", "/")
-        if unit.startswith(("src/", "lib/", "lib-multisrc/", "core", "compiler")) and unit not in failed_units:
-            failed_units[unit] = {
-                "unit": unit,
-                "cause": f"Task :{match.group(1)}:{match.group(2)} failed",
-                "evidence": "",
-                "incompatibility_type": "BUILD_INCOMPATIBILITY",
-            }
-
     for m in _KOTLIN_ERROR_RE.finditer(output):
         file_path, line, col, msg = m.group(1), m.group(2), m.group(3), m.group(4)
+        matched_unit = None
         for unit in list(failed_units.keys()):
             if unit in file_path:
+                matched_unit = unit
                 failed_units[unit]["cause"] = msg.strip()
                 break
+        if not matched_unit:
+            parts = file_path.split("/")
+            for prefix in ("src", "lib", "lib-multisrc"):
+                if prefix in parts:
+                    idx = parts.index(prefix)
+                    if prefix == "src" and idx + 2 < len(parts):
+                        u = f"src/{parts[idx+1]}/{parts[idx+2]}"
+                        if u not in failed_units:
+                            failed_units[u] = {
+                                "unit": u,
+                                "cause": msg.strip(),
+                                "evidence": "",
+                                "incompatibility_type": "KOTLIN_COMPILATION_ERROR",
+                            }
+                    elif prefix in {"lib", "lib-multisrc"} and idx + 1 < len(parts):
+                        u = f"{prefix}/{parts[idx+1]}"
+                        if u not in failed_units:
+                            failed_units[u] = {
+                                "unit": u,
+                                "cause": msg.strip(),
+                                "evidence": "",
+                                "incompatibility_type": "KOTLIN_COMPILATION_ERROR",
+                            }
 
     lines = output.splitlines()
     for unit, info in failed_units.items():
@@ -1206,7 +1221,7 @@ def validate_affected_builds(units: list[str]) -> None:
     if not tasks:
         return
     print(f"Validating affected extensions: {', '.join(units)}")
-    result = subprocess.run([f"./{gradlew.name}", *tasks], capture_output=True, text=True)
+    result = subprocess.run([f"./{gradlew.name}", "--continue", *tasks], capture_output=True, text=True)
     stdout = getattr(result, "stdout", "") or ""
     stderr = getattr(result, "stderr", "") or ""
     if stdout:

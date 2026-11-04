@@ -878,7 +878,7 @@ class PublicationVersionTest(unittest.TestCase):
         ) as run:
             sync_upstream.validate_affected_builds([self.unit])
         self.assertEqual(run.call_args.args[0], [
-            "./gradlew", ":src:ja:cycomi:generateSourceInfo", ":src:ja:cycomi:compileReleaseKotlin",
+            "./gradlew", "--continue", ":src:ja:cycomi:generateSourceInfo", ":src:ja:cycomi:compileReleaseKotlin",
         ])
 
 

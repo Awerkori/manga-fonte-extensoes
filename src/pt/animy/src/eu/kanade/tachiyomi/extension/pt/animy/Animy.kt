@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
@@ -32,7 +33,7 @@ abstract class Animy : KeiSource() {
             .addQueryParameter("offset", offset.toString())
             .build()
 
-        val response = client.get(url).parseAs<AnimyMangaListDto>()
+        val response = client.get(url, Fetch.XHR).parseAs<AnimyMangaListDto>()
         val mangas = response.items
             .filterNot { it.isNovel() }
             .map { it.toSManga() }
@@ -45,7 +46,7 @@ abstract class Animy : KeiSource() {
         val now = System.currentTimeMillis()
         if (page <= 1 || recentMangasCache.isEmpty() || (now - recentMangasCacheTime > CACHE_TTL_MS)) {
             val endpoint = "$baseUrl/api/v1/chapters/recent?limit=200"
-            val recentChapters = client.get(endpoint).parseAs<List<AnimyRecentChapterDto>>()
+            val recentChapters = client.get(endpoint, Fetch.XHR).parseAs<List<AnimyRecentChapterDto>>()
 
             val seenIds = mutableSetOf<Int>()
             val seenSlugs = mutableSetOf<String>()
@@ -120,7 +121,7 @@ abstract class Animy : KeiSource() {
             urlBuilder.addQueryParameter("genre", genre)
         }
 
-        val response = client.get(urlBuilder.build()).parseAs<AnimyMangaListDto>()
+        val response = client.get(urlBuilder.build(), Fetch.XHR).parseAs<AnimyMangaListDto>()
         val mangas = response.items
             .filterNot { it.isNovel() }
             .map { it.toSManga() }
@@ -150,7 +151,7 @@ abstract class Animy : KeiSource() {
         }
 
         val detail = runCatching {
-            client.get(apiUrl).parseAs<AnimyMangaDetailDto>()
+            client.get(apiUrl, Fetch.XHR).parseAs<AnimyMangaDetailDto>()
         }.getOrNull() ?: return null
 
         if (detail.isNovel()) {
@@ -174,7 +175,7 @@ abstract class Animy : KeiSource() {
             "$baseUrl/api/v1/mangas/slug/$slug"
         }
 
-        val detail = client.get(apiUrl).parseAs<AnimyMangaDetailDto>()
+        val detail = client.get(apiUrl, Fetch.XHR).parseAs<AnimyMangaDetailDto>()
 
         if (fetchDetails) {
             manga.title = detail.t
@@ -220,7 +221,7 @@ abstract class Animy : KeiSource() {
             .takeIf { it.isNotBlank() }
             ?: chapter.chapter_number.formatChapterNumber()
 
-        val chapterDto = client.get("$baseUrl/api/v1/mangas/$mangaId/chapters/$chapterNumber")
+        val chapterDto = client.get("$baseUrl/api/v1/mangas/$mangaId/chapters/$chapterNumber", Fetch.XHR)
             .parseAs<AnimyChapterPagesDto>()
 
         val pages = chapterDto.pages.orEmpty()
@@ -247,7 +248,7 @@ abstract class Animy : KeiSource() {
 
     private suspend fun resolveMangaIdFromChapterUrl(chapterUrl: String): Int {
         val slug = chapterUrl.substringAfter("/manga/").substringBefore("/capitulo/").substringBefore("/")
-        val detail = client.get("$baseUrl/api/v1/mangas/slug/$slug").parseAs<AnimyMangaDetailDto>()
+        val detail = client.get("$baseUrl/api/v1/mangas/slug/$slug", Fetch.XHR).parseAs<AnimyMangaDetailDto>()
         return detail.id
     }
 

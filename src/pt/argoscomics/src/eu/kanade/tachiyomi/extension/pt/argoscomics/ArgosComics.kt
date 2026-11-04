@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.post
 import keiyoushi.network.rateLimit
@@ -256,12 +257,12 @@ abstract class ArgosComics :
             .addPathSegment("projetos")
             .addQueryParameter("page", page.toString())
             .build()
-        return client.get(url, rscHeaders).extractNextJs<MangasListDto>()!!.toMangasPage()
+        return client.get(url, rscHeaders, Fetch.DOCUMENT).extractNextJs<MangasListDto>()!!.toMangasPage()
     }
 
     // ======================== Latest =============================
 
-    override suspend fun getLatestUpdates(page: Int): MangasPage = client.get(baseUrl, rscHeaders).extractNextJs<LatestMangas>()!!.toMangasPage()
+    override suspend fun getLatestUpdates(page: Int): MangasPage = client.get(baseUrl, rscHeaders, Fetch.DOCUMENT).extractNextJs<LatestMangas>()!!.toMangasPage()
 
     // ======================== Search =============================
 
@@ -270,7 +271,7 @@ abstract class ArgosComics :
             .set("Next-Action", SEARCH_TOKEN)
             .build()
         val payload = listOf(query).toJsonRequestBody()
-        val dto = client.post(baseUrl, searchHeaders, payload).extractNextJs<List<MangaDto>>() ?: emptyList()
+        val dto = client.post(baseUrl, searchHeaders, Fetch.XHR, payload).extractNextJs<List<MangaDto>>() ?: emptyList()
         return MangasPage(dto.map(MangaDto::toSManga), false)
     }
 
@@ -289,7 +290,7 @@ abstract class ArgosComics :
                 val detailsHeaders = headers.newBuilder()
                     .set("Next-Action", DETAILS_TOKEN)
                     .build()
-                client.post(url, detailsHeaders, payload).also { debugResponse("DETAILS", it) }
+                client.post(url, detailsHeaders, Fetch.XHR, payload).also { debugResponse("DETAILS", it) }
                     .extractNextJs<MangaDetailsDto>()!!.toSManga()
             } else {
                 manga
@@ -303,7 +304,7 @@ abstract class ArgosComics :
                 val chaptersHeaders = headers.newBuilder()
                     .set("Next-Action", CHAPTERS_TOKEN)
                     .build()
-                val response = client.post(url, chaptersHeaders, payload)
+                val response = client.post(url, chaptersHeaders, Fetch.XHR, payload)
                 debugResponse("CHAPTERS", response)
                 val pathSegment = url.substringAfter(baseUrl)
                 response.extractNextJs<VolumeChapterDto>()!!.toChapterList(pathSegment)
