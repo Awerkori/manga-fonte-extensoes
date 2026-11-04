@@ -1,0 +1,104 @@
+{
+  "incompatibilities": {
+    "src/pt/fenixproject": {
+      "attempts": 1,
+      "cause": "No value passed for parameter 'fetch'.",
+      "compilation_evidence": "e: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:52:31 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:52:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:88:31 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:88:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:136:31 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:136:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:170:78 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:170:78 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:44:36 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hent",
+      "dependencies": [
+        ":core"
+      ],
+      "incompatibility_type": "API_SIGNATURE_MISMATCH",
+      "last_attempt_at": "2026-11-04T21:26:37.425363+00:00",
+      "last_functional_version": {
+        "android_code": 106060,
+        "lib": "1.6",
+        "name": "1.6.60",
+        "raw": 60
+      },
+      "module": "src/pt/fenixproject",
+      "next_attempt_at": "2026-11-04T21:41:37.425384+00:00",
+      "recovery_state": "DEFERRED_INCOMPATIBLE",
+      "upstream_commit": "ee661f5233"
+    },
+    "src/pt/hentaifusion": {
+      "attempts": 1,
+      "cause": "No value passed for parameter 'fetch'.",
+      "compilation_evidence": "e: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:52:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:88:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:136:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:170:78 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:44:36 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:44:36 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:59:31 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:59:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:65:78 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/He",
+      "dependencies": [
+        ":core"
+      ],
+      "incompatibility_type": "API_SIGNATURE_MISMATCH",
+      "last_attempt_at": "2026-11-04T21:26:45.014075+00:00",
+      "last_functional_version": {
+        "android_code": 106001,
+        "lib": "1.6",
+        "name": "1.6.1",
+        "raw": 1
+      },
+      "module": "src/pt/hentaifusion",
+      "next_attempt_at": "2026-11-04T21:41:45.014088+00:00",
+      "recovery_state": "DEFERRED_INCOMPATIBLE",
+      "upstream_commit": "ee661f5233"
+    },
+    "src/pt/hentaitecanet": {
+      "attempts": 1,
+      "cause": "No value passed for parameter 'fetch'.",
+      "compilation_evidence": "e: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:52:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:88:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:136:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/fenixproject/src/eu/kanade/tachiyomi/extension/pt/fenixproject/FenixProject.kt:170:78 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:44:36 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:59:31 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:65:78 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:71:66 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaifusion/src/eu/kanade/tachiyomi/extension/pt/hentaifusion/HentaiFusion.kt:90:16 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/hentaitecanet/src/eu/kanade/tachiyomi/extension/pt/hentaitecanet/HentaitecaNet.kt:52:26 None",
+      "dependencies": [
+        ":core"
+      ],
+      "incompatibility_type": "API_SIGNATURE_MISMATCH",
+      "last_attempt_at": "2026-11-04T21:26:52.535653+00:00",
+      "last_functional_version": {
+        "android_code": 106000,
+        "lib": "1.6",
+        "name": "1.6.0",
+        "raw": 0
+      },
+      "module": "src/pt/hentaitecanet",
+      "next_attempt_at": "2026-11-04T21:41:52.535665+00:00",
+      "recovery_state": "DEFERRED_INCOMPATIBLE",
+      "upstream_commit": "ee661f5233"
+    },
+    "src/pt/nexusmangas": {
+      "attempts": 1,
+      "cause": "Argument type mismatch: actual type is 'Headers', but 'Fetch' was expected.",
+      "compilation_evidence": "e: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiyomi/extension/pt/nexusmangas/NexusMangas.kt:28:30 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiyomi/extension/pt/nexusmangas/NexusMangas.kt:30:13 Argument type mismatch: actual type is 'Headers', but 'Fetch' was expected.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiyomi/extension/pt/nexusmangas/NexusMangas.kt:37:85 Unresolved reference 'it'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiyomi/extension/pt/nexusmangas/NexusMangas.kt:40:42 Unresolved reference 'it'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiyomi/extension/pt/nexusmangas/NexusMangas.kt:41:21 Unresolved reference 'size'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiyomi/extension/pt/nexusmangas/NexusMangas.kt:121:28 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiyomi/extension/pt/nexusmangas/NexusMangas.kt:126:13 Argument type mismatch: actual type is 'Headers', but 'Fetch' was expected.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiyomi/extension/pt/nexusmangas/NexusMangas.kt:127:58 Unresolved reference 'pages'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiyomi/extension/pt/nexusmangas/NexusMangas.kt:129:74 Argument type mismatch: actual type is 'Char', but 'String?' was expected.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/nexusmangas/src/eu/kanade/tachiy",
+      "dependencies": [
+        ":core"
+      ],
+      "incompatibility_type": "API_SIGNATURE_MISMATCH",
+      "last_attempt_at": "2026-11-04T21:26:59.969502+00:00",
+      "last_functional_version": {
+        "android_code": 106002,
+        "lib": "1.6",
+        "name": "1.6.2",
+        "raw": 2
+      },
+      "module": "src/pt/nexusmangas",
+      "next_attempt_at": "2026-11-04T21:41:59.969518+00:00",
+      "recovery_state": "DEFERRED_INCOMPATIBLE",
+      "upstream_commit": "ee661f5233"
+    },
+    "src/pt/remangas": {
+      "attempts": 1,
+      "cause": "Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:",
+      "compilation_evidence": "e: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:70:29 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:70:29 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:71:29 Unresolved reference 'comics'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:74:42 Unresolved reference 'hasNextPage'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:97:23 Cannot infer type for type parameter 'T'. Specify it explicitly.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:99:24 None of the following candidates is applicable:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:99:24 No value passed for parameter 'fetch'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:99:77 Unresolved reference 'toSManga'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:99:88 Cannot infer type for type parameter 'T'. Specify it explicitly.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/remangas/src/eu/kanade/tachiyomi/extension/pt/remangas/NoxManga.kt:99:94 Cannot infer type for type parameter 'T'. Specify it explicitly.\ne: file:///",
+      "dependencies": [
+        ":core"
+      ],
+      "incompatibility_type": "API_SIGNATURE_MISMATCH",
+      "last_attempt_at": "2026-11-04T21:27:07.367771+00:00",
+      "last_functional_version": {
+        "android_code": 106056,
+        "lib": "1.6",
+        "name": "1.6.56",
+        "raw": 56
+      },
+      "module": "src/pt/remangas",
+      "next_attempt_at": "2026-11-04T21:42:07.367785+00:00",
+      "recovery_state": "DEFERRED_INCOMPATIBLE",
+      "upstream_commit": "ee661f5233"
+    }
+  }
+}

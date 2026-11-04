@@ -50,8 +50,9 @@ or fix them directly by submitting a Pull Request.
         - [GraphQL Requests - `graphQLBody` / `parseGraphQLAs`](#graphql-requests---graphqlbody--parsegraphqlas)
         - [GraphQL GET requests - `graphQLGet`](#graphql-get-requests---graphqlget)
         - [JsonElement accessor helpers](#jsonelement-accessor-helpers)
-        - [ZIP streaming - `zipDirectoryAsync` / `readZipEntry`](#zip-streaming---zipdirectoryasync--readzipentry)
+        - [ZIP streaming - `zipDirectory` / `readZipEntry`](#zip-streaming---zipdirectory--readzipentry)
         - [Jsoup helpers - `asJsoup` / `attrOrNull` / `textOrNull`](#jsoup-helpers---asjsoup--attrornull--textornull)
+        - [Description builder - `MarkdownDescription` / `toMarkdown` / `escapeMarkdown` / `ratingStars`](#description-builder---markdowndescription--tomarkdown--escapemarkdown--ratingstars)
         - [Cryptography - `decodeHex` / `rc4` / AES helpers](#cryptography---decodehex--rc4--aes-helpers)
         - [Binary endian helpers](#binary-endian-helpers)
         - [Decompression - `Inflater.inflate`](#decompression---inflaterinflate)
@@ -474,6 +475,17 @@ source {
 
 Like `mirrors`, the extension automatically implements `ConfigurableSource` and adds a validated "Custom base URL" `EditTextPreference`. The default URL is restored automatically if the hardcoded default changes in a future update.
 
+Sites that move domains and publish where they are can update either mode at runtime. Override `fetchBaseUrls` to return the current URL, or every mirror in the site's order:
+
+```kotlin
+override suspend fun fetchBaseUrls(client: OkHttpClient): List<String> =
+    client.get("https://hub.example.org/", Fetch.DOCUMENT).asJsoup()
+        .select("a.mirror")
+        .map { it.absUrl("href") }
+```
+
+The lookup runs once per source per app launch, before the first request, and uses the `client` it is given. Requests for the old URL move to the new one; a failed lookup keeps the current URLs. With `mirrors`, the URLs replace the mirror list; the picker is hidden when only one is left. With `custom`, the first URL replaces the custom URL and becomes its default. Changing the DSL URLs in an update clears the fetched ones.
+
 > [!IMPORTANT]
 > When using `mirrors(...)` or `custom(...)`, **do not** implement mirror/URL selection manually in your class using `SharedPreferences` or a `ListPreference` - the generated code handles it. Doing both will create duplicate preferences.
 
@@ -533,15 +545,11 @@ use case. Each lib is self-documented via KDoc comments in its Kotlin source fil
 | [`lib-imagedecoder`](https://github.com/keiyoushi/extensions-source/tree/main/lib/imagedecoder)           | Decodes images to a `Bitmap` with the host app's decoder (AVIF, JPEG XL, HEIF)          |
 | [`lib-lzstring`](https://github.com/keiyoushi/extensions-source/tree/main/lib/lzstring)                   | LZ-String decompression and compression                                                 |
 | [`lib-publus`](https://github.com/keiyoushi/extensions-source/tree/main/lib/publus)                       | Handles Publus DRM-protected reader decryption, unscrambling, and page loading          |
-| [`lib-randomua`](https://github.com/keiyoushi/extensions-source/tree/main/lib/randomua)                   | Fetches and rotates real-world User-Agent strings (requires overriding `getMangaUrl()`) |
 | [`lib-secretstream`](https://github.com/keiyoushi/extensions-source/tree/main/lib/secretstream)           | ChaCha20/Poly1305/X25519 cryptography for secret-stream encrypted sources               |
 | [`lib-speedbinb`](https://github.com/keiyoushi/extensions-source/tree/main/lib/speedbinb)                 | Processes, decrypts, and descrambles SpeedBinb reader payloads                          |
 | [`lib-synchrony`](https://github.com/keiyoushi/extensions-source/tree/main/lib/synchrony)                 | JavaScript deobfuscation via the Synchrony engine (QuickJS sandbox)                     |
 | [`lib-textinterceptor`](https://github.com/keiyoushi/extensions-source/tree/main/lib/textinterceptor)     | Renders plain text or HTML as a PNG image page                                          |
 | [`lib-unpacker`](https://github.com/keiyoushi/extensions-source/tree/main/lib/unpacker)                   | Unpacks Dean Edwards-packed JavaScript; substring extraction helpers                    |
-
-> [!IMPORTANT]
-> If your module uses `:lib:randomua`, the Spotless check requires your extension to override the `getMangaUrl()` method in your main class, or the build will fail.
 
 > [!NOTE]
 > The table above highlights the most commonly used libraries. Check the `lib/` directory for the full list of available modules and their source files.
@@ -815,10 +823,10 @@ val response = client.post("$baseUrl/api/search", apiHeaders, Fetch.XHR, body)
   browsers send it: in full to the same origin, as the origin elsewhere, and not at all from https to http.
 - Always wrap the returned `Response` in `response.use { ... }` or consume it with `parseAs`/`asJsoup`, which close it
   for you.
-- With a `User-Agent` that names neither Chrome nor Firefox (an app's own API client) no browser headers are added,
+- With a `User-Agent` that identifies none of Chrome, Firefox, Safari or WKWebView (an app's own API client) no browser headers are added,
   so a `Fetch` is fine there too.
-- `get` and `post` without a `Fetch` are deprecated; they send the request as built, like `Fetch.NONE`. `put` and
-  `head` send it as built too.
+- `get` and `post` always take a `Fetch`; pass `Fetch.NONE` for a request that has to go out as built. `put` and
+  `head` send it as built.
 - For a request the helpers don't cover (another method, or one built from another request), build the `Request`
   yourself and send it with `client.call(request)`, which takes `ensureSuccess` too. It goes out as built unless you
   set a `Fetch` on the builder with `.fetch(Fetch.XHR)` and so on.
@@ -1032,31 +1040,14 @@ val data = client.post(
 
 ##### GraphQL GET requests - `graphQLGet`
 
-For sources that send GraphQL over HTTP GET instead of POST, use `graphQLGet`:
+For sources that send GraphQL over HTTP GET instead of POST, use the suspend `OkHttpClient.graphQLGet`.
+It sends the request and returns the `Response`, taking the source's own `headers` when none are
+passed. `ensureSuccess` behaves as in [HTTP requests](#http-requests---okhttpclientget--post--put--head),
+and it additionally takes a `cacheControl`, defaulting to a 10-minute max-age, and a required `fetch`, passed by name.
 
 ```kotlin
 import keiyoushi.utils.graphQLGet
 
-val request = graphQLGet(
-    url = "$baseUrl/graphql",
-    headers = headers,
-    query = $$"""
-    query SearchManga($page: Int!) {
-      mangas(page: $page) {
-        id
-      }
-    }
-    """,
-    variables = variables
-)
-```
-
-Inside a `KeiSource`, use the suspend `OkHttpClient` overload instead: it sends the request and
-returns the `Response`, taking the source's own `headers` when none are passed. `ensureSuccess`
-behaves as in [HTTP requests](#http-requests---okhttpclientget--post--put--head), and it
-additionally takes a `cacheControl`, defaulting to a 10-minute max-age, and a `fetch`, defaulting to `Fetch.NONE`.
-
-```kotlin
 val data = client.graphQLGet(
     url = "$baseUrl/graphql",
     operationName = "SearchManga",
@@ -1134,24 +1125,26 @@ val meta = root["data"]!!.obj.getObject("metadata")    // or getObjectOrNull
 
 Prefer these over writing `element.jsonObject["key"]?.jsonPrimitive?.content` manually.
 
-##### ZIP streaming - `zipDirectoryAsync` / `readZipEntry`
+##### ZIP streaming - `zipDirectory` / `readZipEntry`
 
-For sources that serve manga pages as remote ZIP archives, the `keiyoushi.zip` package lets you read the central directory and individual entries using HTTP Range requests - no need to download the entire file. Import from `keiyoushi.zip`:
+For sources that serve manga pages as remote ZIP archives, the `keiyoushi.zip` package reads the central directory and individual entries with HTTP Range requests, without downloading the whole file:
 
 ```kotlin
 import keiyoushi.zip.readZipEntry
-import keiyoushi.zip.zipDirectoryAsync
+import keiyoushi.zip.zipDirectory
 import okio.buffer
 
-// 1. Fetch the ZIP central directory asynchronously:
-val directory = client.zipDirectoryAsync(zipUrl, headers)
+// 1. Fetch and parse the ZIP central directory:
+val directory = client.zipDirectory(zipUrl)
 
 // 2. Find an entry by name and read its decompressed bytes:
 val entry = directory.entries.first { it.name == "001.jpg" }
-val imageBytes = client.readZipEntry(zipUrl, entry, headers).buffer().readByteArray()
+val imageBytes = client.readZipEntry(zipUrl, entry).buffer().readByteArray()
 ```
 
-`client.zipDirectoryAsync(...)` is the public `OkHttpClient` extension method that performs HTTP range requests to fetch and parse the ZIP central directory without downloading the entire file. It automatically resolves total archive size from the `Content-Range` header and handles ZIP64 archives. `readZipDirectory` is a low-level internal helper that can be used directly when the raw bytes or size have already been obtained. `client.readZipEntry` streams and decompresses only the bytes required for that one entry. Use this instead of downloading the full ZIP into a `ZipInputStream`, which forces the entire archive into memory.
+Both are suspend `OkHttpClient` extensions that take the source's own `headers` unless you pass some. `client.zipDirectory` gets the archive size from `Content-Range` and handles ZIP64; `client.readZipEntry` streams and decompresses only that one entry. Use them instead of downloading the full ZIP into a `ZipInputStream`, which forces the entire archive into memory.
+
+To serve entries as pages from an image interceptor, which can't suspend, put the entry's fields in the page URL and read it with the blocking building blocks: `chain.proceed(request.newBuilder().range(entry.dataRange).build())`, then `readEntry(response.body.source(), entry.compressedSize, entry.method)`.
 
 ##### Jsoup helpers - `asJsoup` / `attrOrNull` / `textOrNull`
 
@@ -1184,6 +1177,25 @@ val lastChapterElement = document.selectLast(".chapter-item")
 val title = element.textOrNull()
 val directText = element.ownTextOrNull() // excludes text of nested child elements
 ```
+
+##### Description builder - `MarkdownDescription` / `toMarkdown` / `escapeMarkdown` / `ratingStars`
+
+`SManga.description` is Markdown. `MarkdownDescription.Builder` adds sections in call order, escapes site text and skips empty input:
+
+```kotlin
+import keiyoushi.utils.MarkdownDescription
+
+description = MarkdownDescription.Builder()
+    .rating(score) // out of 10, or set `max`; optional `votes`
+    .info(year, type) // a run of rating, info and fields shares one line
+    .description(document.selectFirst(".synopsis")) // HTML or plain text; `markdown()` for site Markdown
+    .field("Publisher", publisher)
+    .altTitles(altTitles)
+    .links(listOf("AniList" to anilistUrl, "MyAnimeList" to malUrl))
+    .build() // null when empty
+```
+
+Outside the builder, `Element.toMarkdown()`, `String.escapeMarkdown()` and `ratingStars()` do the same for one piece.
 
 ##### Cryptography - `decodeHex` / `rc4` / `xor` / AES helpers
 
@@ -1361,7 +1373,7 @@ Optional overrides (each has a working default; override only when your source n
 | `fun getHomeUrl(): String`                                            | Returns `baseUrl`.                                              | The browse screen's "Open in WebView" action should land somewhere other than `baseUrl` (e.g. the source's real site differs from the API host used as `baseUrl`).                                      |
 | `suspend fun getImageUrl(page: Page): String`                         | Not called unless a `Page.imageUrl` is empty.                   | A page's image URL can't be determined upfront in `getPageList` and must be resolved lazily once the chapter is opened - see [Chapter Pages](#chapter-pages). Make your request with `client` and return the URL directly. |
 | `fun getImageRequest(page: Page): Request`                            | A GET of `page.imageUrl` with `headers`.                        | The image needs other headers or a different URL. A GET without a `Fetch` is sent with `imageFetch`. See [Browser headers](#browser-headers). |
-| `val imageFetch: Fetch`                                               | `Fetch.NONE`.                                                   | The site's page images or covers need browser image headers: `Fetch.IMAGE` sends them.                                                                                                  |
+| `val imageFetch: Fetch`                                               | `Fetch.IMAGE`.                                                  | The site's page images or covers must go out as built, without browser image headers: `Fetch.NONE`.                                                                                     |
 | `fun getMangaUrl(manga: SManga): String`                              | Returns `baseUrl + manga.url`.                                  | That doesn't land on the manga's real page. Since `SManga.url` is recommended to hold just an ID/slug rather than a full relative path (see [Misc notes](#misc-notes)), the default concatenation often isn't a valid path by itself - override to build the real URL from the ID/slug (e.g. `"$baseUrl/manga/${manga.url}"`).      |
 | `fun getChapterUrl(chapter: SChapter): String`                        | Returns `baseUrl + chapter.url`.                                | Same reasoning as `getMangaUrl`, for chapters.                                                                                                                                                            |
 | `suspend fun getMangaByUrl(url: HttpUrl): SManga?`                    | Throws (unimplemented).                                         | Almost always: this backs URL search (pasting/opening a manga link for this source). Return `null` if the URL isn't recognized - leaving this unimplemented means URL search crashes for this source.  |
@@ -1372,6 +1384,7 @@ Optional overrides (each has a working default; override only when your source n
 | `val supportsFilterFetching: Boolean`                                 | `false`.                                                         | The source needs to fetch its filter options from the network - see filter fetching below.                                                                                                              |
 | `suspend fun fetchFilterData(): JsonElement`                          | Returns `JsonNull`.                                              | Paired with `supportsFilterFetching = true`.                                                                                                                                                              |
 | `fun getFilterList(data: JsonElement?): FilterList`                   | Returns an empty `FilterList`.                                   | The source has any filters at all, fetched or static.                                                                                                                                                    |
+| `suspend fun fetchBaseUrls(client: OkHttpClient): List<String>`       | Returns an empty list.                                           | The site publishes its current domain and the source uses `mirrors` or `custom` - see [baseUrl modes](#baseurl-modes).                                                                                  |
 | `fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder`    | No changes.                                                      | Timeouts, extra interceptors, cookie/cache/DNS config - `client` itself is `final` on `KeiSource`.                                                                                                       |
 | `fun Headers.Builder.configureHeaders(): Headers.Builder`             | No changes.                                                      | Extra default headers beyond the `Referer`/`Origin` `KeiSource` already sets - `headersBuilder()` itself is `final`.                                                                                     |
 
@@ -1394,18 +1407,18 @@ Behavior `KeiSource` gives you for free:
 - **Headers:** `headersBuilder()` already sets `Referer` to `"$baseUrl/"` (with trailing slash) and `Origin` to
   `baseUrl`; override `Headers.Builder.configureHeaders()` instead of `headersBuilder()` to add more.
 - <a id="browser-headers"></a>**Browser headers:** a request with a `Fetch` other than `Fetch.NONE` (see
-  [HTTP requests](#http-requests---okhttpclientget--post--put--head)), with a `User-Agent` naming Chrome or Firefox, gets the headers
+  [HTTP requests](#http-requests---okhttpclientget--post--put--head)), with a `User-Agent` identifying Chrome, Firefox, Safari or WKWebView, gets the headers
   that browser sends for that kind of request: client hints, `Accept-Language`, fetch metadata, `Accept`, `Priority`,
   and the default `Origin` only where browsers send one. Any other request goes out as built, apart from the `Referer`
   of `Fetch.from`.
   - On a `Request.Builder`, set it with `.fetch(Fetch.XHR)` and so on. In an interceptor, change a request with
     `request.newBuilder()`; a new `Request.Builder()` drops its `Fetch`.
   - Page images (GETs from `getImageRequest` without a `Fetch`) and the covers the app loads are sent with
-    `imageFetch`, `Fetch.NONE` by default; override it with `Fetch.IMAGE` to send browser headers. The app's covers are
+    `imageFetch`, `Fetch.IMAGE` by default; override it with `Fetch.NONE` to send them as built. The app's covers are
     recognised as GETs with `Cache-Control: no-store` and no `Fetch`, so don't put that on your own requests without
     one.
-  - Headers a request already has are kept, fetch metadata the source sets itself included, and a request without
-    `Origin` gets none. `from` replaces the `Referer`, also on each redirect.
+  - Headers a request already has are kept, fetch metadata and `Origin` the source sets itself included; `Origin` is
+    otherwise added where browsers send one (requests other than GET and HEAD, cross-origin XHRs). `from` replaces the `Referer`, also on each redirect.
 - **Filter fetching:** if a source needs to fetch its filter options from the network, set
   `supportsFilterFetching = true`, implement `fetchFilterData()` (returns the raw filter data as a
   `JsonElement`, called on a background coroutine, attempted up to 3 times total on failure, and

@@ -1,1 +1,15 @@
-{"themes": {}}
+{
+  "themes": {
+    "aurora": {
+      "patch_base": "1dfd0bcf25b48cb5bd42d9191918a29072c67a61",
+      "reason": "functional conflict: lib-multisrc/aurora/src/eu/kanade/tachiyomi/multisrc/aurora/Aurora.kt",
+      "units": [
+        "src/pt/leitordemangas",
+        "src/pt/manganyx",
+        "src/pt/mangasbrasuka",
+        "src/pt/mugiwarasoficial"
+      ],
+      "upstream_ref": "ee661f5233b346559fbdd53993d447c318c5aef0"
+    }
+  }
+}

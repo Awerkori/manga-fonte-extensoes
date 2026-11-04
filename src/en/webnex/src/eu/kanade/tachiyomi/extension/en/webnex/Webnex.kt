@@ -13,8 +13,10 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.source.KeiSource
+import keiyoushi.utils.MarkdownDescription
 import keiyoushi.utils.asJsoup
 import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.getPreferencesLazy
@@ -36,10 +38,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
-import org.jsoup.nodes.TextNode
 import java.io.IOException
-import kotlin.math.roundToInt
 import kotlin.random.Random
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -53,7 +52,6 @@ import kotlin.time.Instant
 abstract class Webnex :
     KeiSource(),
     ConfigurableSource {
-
     private val preferences by getPreferencesLazy()
 
     // The site rejects the app's default Cache-Control (max-age=600)
@@ -79,7 +77,7 @@ abstract class Webnex :
     }
 
     private suspend fun getCards(url: HttpUrl, section: String = ""): MangasPage {
-        val document = client.get(url).asDocument()
+        val document = client.get(url, Fetch.DOCUMENT).asDocument()
         val mangas = document.select("$section li.card-item a.card-link").map { element ->
             SManga.create().apply {
                 this.url = element.absUrl("href").toHttpUrl().pathSegments[1]
@@ -111,7 +109,7 @@ abstract class Webnex :
         if (url.host != baseUrl.toHttpUrl().host) return null
         val slug = when (url.pathSegments[0]) {
             "manga" -> url.pathSegments.getOrNull(1) ?: return null
-            "read" -> client.get(url.newBuilder().query(null).build()).extractNextJs<ReaderPropsDto> {
+            "read" -> client.get(url.newBuilder().query(null).build(), Fetch.DOCUMENT).extractNextJs<ReaderPropsDto> {
                 it is JsonObject && "chapter" in it && "series" in it
             }?.series?.id ?: return null
             else -> return null
@@ -133,7 +131,7 @@ abstract class Webnex :
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val document = client.get(getMangaUrl(manga)).asDocument()
+        val document = client.get(getMangaUrl(manga), Fetch.DOCUMENT).asDocument()
         val details = SManga.create().apply {
             url = manga.url
             title = document.selectFirst("h1.series-title")!!.text()
@@ -151,23 +149,15 @@ abstract class Webnex :
                 "dropped" -> SManga.CANCELLED
                 else -> SManga.UNKNOWN
             }
-            val rating = document.selectFirst(".series-numbers a.series-number-link")?.let { link ->
-                val score = link.text().toFloatOrNull() ?: return@let null
-                val stars = (score / 2).roundToInt()
-                "★".repeat(stars) + "☆".repeat(5 - stars) + " ${link.text()}"
-            }
             // Year, original language and content rating; type and demographic are in genres
             val facts = document.select(".series-facts > :not(.fact-status, a[href*=kind=], a[href*=demographic=])").map { it.text() }
-            val altTitles = document.select("details.series-more li").map { it.text() }.distinct() - title
-            val links = document.select(".tracker-row a").map { "[${it.attr("title")}](${it.absUrl("href")})" }
-            description = listOfNotNull(
-                (listOfNotNull(rating) + facts).joinToString(" · ").ifEmpty { null },
-                document.select(".series-desc p").joinToString("\n\n") { it.toMarkdown().trim() }.ifEmpty { null },
-                listOfNotNull(
-                    altTitles.ifEmpty { null }?.joinToString("\n", "**Alt titles:**\n") { "- $it" },
-                    links.ifEmpty { null }?.joinToString("\n", "**Links:**\n") { "- $it" },
-                ).joinToString("\n\n").ifEmpty { null },
-            ).joinToString("\n\n").ifEmpty { null }
+            description = MarkdownDescription.Builder().apply {
+                rating(document.selectFirst(".series-numbers a.series-number-link")?.text()?.toDoubleOrNull())
+                info(*facts.toTypedArray())
+                document.select(".series-desc p").forEach { description(it) }
+                altTitles(document.select("details.series-more li").map { it.text() }.filter { it != title })
+                links(document.select(".tracker-row a").map { it.attr("title") to it.absUrl("href") })
+            }.build()
         }
         if (!fetchChapters) return SMangaUpdate(details, chapters)
 
@@ -175,7 +165,7 @@ abstract class Webnex :
         val mangaUrl = getMangaUrl(manga).toHttpUrl()
         val otherPages = coroutineScope {
             (2..lastPage).map { page ->
-                async { client.get(mangaUrl.newBuilder().addQueryParameter("page", page.toString()).build()).asDocument() }
+                async { client.get(mangaUrl.newBuilder().addQueryParameter("page", page.toString()).build(), Fetch.DOCUMENT).asDocument() }
             }.awaitAll()
         }
 
@@ -370,21 +360,6 @@ abstract class Webnex :
             placeholder.parent()!!.insertChildren(placeholder.siblingIndex(), chunk.childNodes())
             placeholder.remove()
             chunk.remove()
-        }
-    }
-
-    // Keep line breaks and links, descriptions render as Markdown.
-    private fun Element.toMarkdown(): String = buildString {
-        childNodes().forEach { node ->
-            when (node) {
-                is TextNode -> append(node.text())
-                is Element -> when (node.normalName()) {
-                    "br" -> append('\n')
-                    "a" -> append("[${node.text()}](${node.absUrl("href")})")
-                    "strong", "b" -> append("**${node.toMarkdown()}**")
-                    else -> append(node.toMarkdown())
-                }
-            }
         }
     }
 

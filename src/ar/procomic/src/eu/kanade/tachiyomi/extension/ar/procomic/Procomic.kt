@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.util.LruCache
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.network.HttpException
@@ -17,109 +19,187 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
 import keiyoushi.lib.imagedecoder.ImageDecoder
+import keiyoushi.network.Fetch
+import keiyoushi.network.addCookie
+import keiyoushi.network.fetch
 import keiyoushi.network.get
-import keiyoushi.network.post
+import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
+import keiyoushi.utils.WebViewScope
 import keiyoushi.utils.firstInstance
 import keiyoushi.utils.firstInstanceOrNull
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.getTurnstileToken
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.runWebView
 import keiyoushi.utils.string
-import keiyoushi.utils.toJsonElement
 import keiyoushi.utils.toJsonString
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import okhttp3.Call
-import okhttp3.Headers
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.asResponseBody
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
+import java.io.ByteArrayInputStream
 import java.io.IOException
-import java.security.PrivateKey
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.math.roundToInt
 import kotlin.reflect.KMutableProperty0
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 @Source
 abstract class Procomic :
     KeiSource(),
     ConfigurableSource {
+    private val preferences by getPreferencesLazy {
+        // The device keys of the app-API versions.
+        edit().remove("device_id").remove("device_key").remove("device_public_key").remove("attest_at").apply()
+    }
 
-    private val preferences by getPreferencesLazy()
-
-    private val apiUrl = "https://$API_HOST"
     private val siteHost get() = baseUrl.toHttpUrl().host
 
     override fun OkHttpClient.Builder.configureClient() = this
+        // The listing API 403s requests closer than about 5 s apart.
+        .rateLimit(1, 5.seconds) { it.encodedPath == "/api/public/content" }
+        .rateLimit(3) { it.host == siteHost || it.host == MIRROR_HOST }
+        // Sensitive series render the reader only with the site's safe browsing switched off.
+        .addCookie("safe_browsing" to "off")
+        .addCookie({ MIRROR_HOST }, "safe_browsing" to "off")
+        .addInterceptor(::retryStalls)
         .addInterceptor(::pageInterceptor)
 
-    override fun Headers.Builder.configureHeaders() = this
-        .set("User-Agent", ProChanSigner.READ_UA)
-        .removeAll("Origin")
-        .removeAll("Referer")
+    @Volatile private var listToken: String? = null
+    private val listTokenMutex = Mutex()
 
     private var popularPage = 1
     private var latestPage = 1
     private var searchPage = 1
 
-    override suspend fun getPopularManga(page: Int): MangasPage = feed(page, ::popularPage) {
+    override suspend fun getPopularManga(page: Int): MangasPage = listing(page, ::popularPage) {
         addQueryParameter("sort", "popular")
     }
 
-    override suspend fun getLatestUpdates(page: Int): MangasPage = feed(page, ::latestPage) {
-        addQueryParameter("sort", "latest")
+    override suspend fun getLatestUpdates(page: Int): MangasPage = listing(page, ::latestPage) {
+        addQueryParameter("sort", "latest_chapter")
     }
 
-    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage = feed(page, ::searchPage) {
+    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
+        val genres = filters.firstInstanceOrNull<GenreFilter>()
+        val included = genres?.included.orEmpty()
+        val excluded = genres?.excluded.orEmpty()
+        // Genres are matched here, so take the API's largest pages.
+        val limit = if (included.isEmpty() && excluded.isEmpty()) LIST_LIMIT else GENRE_LIST_LIMIT
+        return listing(page, ::searchPage, limit, { it.hasGenres(included, excluded) }) {
+            searchQuery(query, filters)
+        }
+    }
+
+    private fun HttpUrl.Builder.searchQuery(query: String, filters: FilterList) {
         if (query.isNotBlank()) addQueryParameter("search", query)
         addQueryParameter("sort", filters.firstInstance<SortFilter>().selected)
         filters.firstInstance<TypeFilter>().selected?.let { addQueryParameter("type", it) }
-        filters.firstInstanceOrNull<GenreFilter>()?.let { genres ->
-            genres.included.takeIf { it.isNotEmpty() }?.let { addQueryParameter("includeGenres", it.joinToString(",")) }
-            genres.excluded.takeIf { it.isNotEmpty() }?.let { addQueryParameter("excludeGenres", it.joinToString(",")) }
-        }
+        filters.firstInstance<StatusFilter>().selected?.let { addQueryParameter("progress", it) }
+        filters.firstInstance<YearFilter>().selected?.let { addQueryParameter("year", it) }
     }
 
-    // A genre filter or the novel drop can empty a page while later pages still have entries; skip the empty ones.
-    private suspend fun feed(page: Int, cursor: KMutableProperty0<Int>, params: HttpUrl.Builder.() -> Unit): MangasPage {
+    // Skips API pages with nothing readable (most of Latest is novels), so the app's page number and the API's
+    // drift apart.
+    private suspend fun listing(
+        page: Int,
+        cursor: KMutableProperty0<Int>,
+        limit: Int = LIST_LIMIT,
+        keep: (ContentDto) -> Boolean = { true },
+        query: HttpUrl.Builder.() -> Unit,
+    ): MangasPage {
         if (page == 1) cursor.set(1)
         while (true) {
-            val url = "$apiUrl/api/android/feed/all-series".toHttpUrl().newBuilder()
-                .apply(params)
-                .addQueryParameter("limit", LIST_LIMIT.toString())
+            val url = baseUrl.toHttpUrl().newBuilder()
+                .addPathSegments("api/public/content")
+                .apply(query)
+                .addQueryParameter("limit", limit.toString())
                 .addQueryParameter("page", cursor.get().toString())
-                .addQueryParameter("g", "1")
                 .build()
-            val data = signedGet(url).parseAs<FeedDto>()
+            val data = listingPage(url).parseAs<ContentPageDto>()
             cursor.set(cursor.get() + 1)
-            val mangas = data.data.filter { it.isReadable }.map { it.toSManga(API_HOST) }
+            val mangas = data.data.filter { it.isReadable && keep(it) }.map { it.toDetails(siteHost) }
             if (mangas.isNotEmpty() || !data.hasNextPage) return MangasPage(mangas, data.hasNextPage)
         }
     }
+
+    // Later pages and filters want a Turnstile token from the site's series page; tokens last about 5 min.
+    private suspend fun listingPage(url: HttpUrl): Response {
+        val token = listToken
+        return try {
+            client.get(url, listHeaders(token), Fetch.XHR.from(seriesUrl))
+        } catch (e: HttpException) {
+            if (e.code != 403) throw e
+            client.get(url, listHeaders(newListToken(token)), Fetch.XHR.from(seriesUrl))
+        }
+    }
+
+    // Reuses a token another request minted meanwhile.
+    private suspend fun newListToken(stale: String?): String = listTokenMutex.withLock {
+        listToken?.takeIf { it != stale }
+            ?: getTurnstileToken(seriesUrl, TURNSTILE_SITE_KEY).also { listToken = it }
+    }
+
+    private val seriesUrl get() = "$baseUrl/$lang/series"
+
+    private fun listHeaders(token: String?) = token?.let { headers.newBuilder().set("x-turnstile-token", it).build() } ?: headers
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
         if (url.host != siteHost && url.host != MIRROR_HOST) return null
         val segments = url.pathSegments.filterNot { it in LOCALES }
         val id = segments.lastOrNull()?.substringAfterLast('-')?.toIntOrNull() ?: return null
         val seriesId = if (segments.first() == "chapter") {
-            runCatchingHttp { signedGet(chapterApiUrl(id)).parseAs<ChapterRefDto>().contentId } ?: return null
+            apiOrNull("chapters", id)?.parseAs<ChapterRefDto>()?.contentId ?: return null
         } else {
             id
         }
-        val series = runCatchingHttp { signedGet(contentApiUrl(seriesId)).parseAs<ContentWrapperDto>().data } ?: return null
-        return series.takeIf { it.isReadable }?.toDetails(API_HOST)
+        val series = apiOrNull("content", seriesId)?.parseAs<ContentDto>() ?: return null
+        return series.takeIf { it.isReadable }?.toDetails(siteHost)
     }
+
+    private suspend fun apiOrNull(path: String, id: Int): Response? {
+        val response = client.get(apiUrl(path, id), Fetch.XHR, ensureSuccess = false)
+        if (response.isSuccessful) return response
+        response.close()
+        if (response.code == 404) return null
+        throw HttpException(response.code)
+    }
+
+    private fun apiUrl(path: String, id: Int) = baseUrl.toHttpUrl().newBuilder()
+        .addPathSegments("api/public")
+        .addPathSegment(path)
+        .addPathSegment(id.toString())
+        .build()
 
     override suspend fun fetchMangaUpdate(
         manga: SManga,
@@ -127,26 +207,39 @@ abstract class Procomic :
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate = coroutineScope {
-        val details = if (fetchDetails) {
-            async { signedGet(contentApiUrl(manga.url.toInt())).parseAs<ContentWrapperDto>().data.toDetails(API_HOST) }
+        // Entries added by the app-API versions have no type, which the chapter list needs.
+        val details = if (fetchDetails || "type" !in manga.memo) {
+            async { client.get(apiUrl("content", manga.url.toInt()), Fetch.XHR).parseAs<ContentDto>().toDetails(siteHost) }
         } else {
             null
         }
-        val chapterList = if (fetchChapters) async { getChapterList(manga) } else null
+        val chapterList = if (fetchChapters) {
+            async { getChapterList(if ("type" in manga.memo) manga else details!!.await()) }
+        } else {
+            null
+        }
         SMangaUpdate(details?.await() ?: manga, chapterList?.await() ?: chapters)
     }
 
     private suspend fun getChapterList(manga: SManga): List<SChapter> {
-        val url = "$apiUrl/api/android/manga/${manga.url}/chapters".toHttpUrl().newBuilder()
+        val url = baseUrl.toHttpUrl().newBuilder()
+            .addPathSegments("api/public")
+            .addPathSegment(manga.memo["type"]!!.string)
+            .addPathSegment(manga.url)
+            .addPathSegment("chapters")
             .addQueryParameter("limit", CHAPTER_LIMIT.toString())
             .addQueryParameter("order", "desc")
             .build()
 
-        val first = signedGet(url.newBuilder().addQueryParameter("page", "1").build()).parseAs<ChapterListDto>()
-        val pages = (first.meta.total + CHAPTER_LIMIT - 1) / CHAPTER_LIMIT
+        val first = client.get(url.newBuilder().addQueryParameter("page", "1").build(), Fetch.XHR)
+            .parseAs<ChapterPageDto>()
+        val pages = (first.total + CHAPTER_LIMIT - 1) / CHAPTER_LIMIT
         val rest = coroutineScope {
             (2..pages).map { page ->
-                async { signedGet(url.newBuilder().addQueryParameter("page", page.toString()).build()).parseAs<ChapterListDto>() }
+                async {
+                    client.get(url.newBuilder().addQueryParameter("page", page.toString()).build(), Fetch.XHR)
+                        .parseAs<ChapterPageDto>()
+                }
             }.awaitAll()
         }
 
@@ -173,184 +266,241 @@ abstract class Procomic :
         .build()
         .toString()
 
+    // The site's reader hands out pages only to a browser running it, so each chapter is opened in the reader in a
+    // WebView and read like a person would: every page scrolls the reader to it, and the images the reader loads
+    // are shared with the app.
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val chapterId = chapter.url.toInt()
-        val reader = fetchReader(chapterId) ?: return emptyList()
-        readerCache.put(chapterId, reader)
-        return buildList {
-            reader.images.indices.forEach { add(Page(size, imageUrl = pageUrl(IMAGE_HOST, chapterId, it))) }
-            reader.maps.indices.forEach { add(Page(size, imageUrl = pageUrl(MAP_HOST, chapterId, it))) }
+        val chapterUrl = getChapterUrl(chapter)
+        return List(session(chapterUrl).pageCount()) { index ->
+            val url = HttpUrl.Builder()
+                .scheme("http")
+                .host(PAGE_HOST)
+                .fragment(PageRefDto(chapterUrl, index).toJsonString())
+                .build()
+            Page(index, imageUrl = url.toString())
         }
     }
 
-    private suspend fun fetchReader(chapterId: Int): ReaderDto? {
-        val chapter = try {
-            signedGet(chapterApiUrl(chapterId)).parseAs<ReaderWrapperDto>().data
-        } catch (e: HttpException) {
-            // A locked chapter answers 403; return no pages, as for an empty chapter.
-            if (e.code == 403) return null else throw e
+    private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private val sessions = object : LruCache<String, ReaderSession>(MAX_SESSIONS) {
+        override fun entryRemoved(evicted: Boolean, key: String, oldValue: ReaderSession, newValue: ReaderSession?) {
+            oldValue.close()
         }
-        val deferred = chapter.deferredMedia?.token?.let { token ->
-            val url = "$apiUrl/api/android/chapter/$chapterId/deferred-media".toHttpUrl().newBuilder()
-                .addQueryParameter("token", token)
-                .build()
-            signedGet(url, chapter.readerSession?.token).parseAs<ReaderWrapperDto>().data
+    }
+
+    @Synchronized
+    private fun session(chapterUrl: String): ReaderSession = sessions[chapterUrl]?.takeUnless { it.closed }
+        ?: ReaderSession(chapterUrl).also { sessions.put(chapterUrl, it) }
+
+    // A chapter open in the site's reader, closed after a while without page requests.
+    private inner class ReaderSession(private val chapterUrl: String) {
+        private val webView = CompletableDeferred<WebViewScope<Unit>>()
+        private val images = ConcurrentHashMap<String, CompletableDeferred<ByteArray>>()
+
+        @Volatile
+        private var reloads = 0
+
+        @Volatile
+        private var lastUsed = TimeSource.Monotonic.markNow()
+
+        @Volatile
+        var closed = false
+            private set
+
+        private val job = sessionScope.launch {
+            try {
+                runWebView<Unit>(SESSION_TIMEOUT) { open() }
+            } catch (e: Throwable) {
+                webView.completeExceptionally(e)
+            } finally {
+                closed = true
+            }
         }
-        return ReaderDto(
-            images = chapter.images + deferred?.images.orEmpty(),
-            maps = chapter.maps + deferred?.maps.orEmpty(),
-        )
+
+        fun close() {
+            closed = true
+            job.cancel()
+        }
+
+        private fun WebViewScope<Unit>.open() {
+            interceptRequest(::share)
+            poll(IDLE_TIMEOUT / 4) {
+                if (lastUsed.elapsedNow() > IDLE_TIMEOUT) resolve(Unit)
+            }
+            loadUrl(chapterUrl)
+            webView.complete(this)
+        }
+
+        // Fetches the reader's page images for it, keeping the bytes for the app.
+        private fun share(request: WebResourceRequest): WebResourceResponse? {
+            val url = request.url
+            val path = url.path.orEmpty()
+            if (request.method != "GET" || url.host?.endsWith(IMAGE_DOMAIN) != true) return null
+            if (!path.startsWith("/i/") && !path.startsWith("/chapters/")) return null
+            val image = images.getOrPut(url.toString()) { CompletableDeferred() }
+            // Without the WebView's cache validators: its cache doesn't see the response, so a 304 would leave it empty.
+            val headers = request.requestHeaders.filterKeys { !it.equals("If-None-Match", true) && !it.equals("If-Modified-Since", true) }
+            val call = Request.Builder().url(url.toString()).headers(headers.toHeaders()).fetch(Fetch.NONE).build()
+            return try {
+                client.newCall(call).execute().use {
+                    val bytes = it.body.bytes()
+                    if (!it.isSuccessful) throw HttpException(it.code)
+                    image.complete(bytes)
+                    val responseHeaders = it.headers.names()
+                        .filter { name -> !name.equals("Content-Encoding", true) && !name.equals("Content-Length", true) }
+                        .associateWith { name -> it.header(name)!! }
+                    WebResourceResponse(
+                        it.body.contentType()?.let { type -> "${type.type}/${type.subtype}" },
+                        null,
+                        it.code,
+                        // HTTP/2 has no reason phrase, which WebResourceResponse requires.
+                        it.message.ifEmpty { "OK" },
+                        responseHeaders,
+                        ByteArrayInputStream(bytes),
+                    )
+                }
+            } catch (e: Exception) {
+                images.remove(url.toString(), image)
+                image.completeExceptionally(e)
+                val code = (e as? HttpException)?.code ?: 504
+                WebResourceResponse(null, null, code, "Error", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+            }
+        }
+
+        suspend fun pageCount(): Int = waitFor(null) { slot(0).count }
+
+        suspend fun page(index: Int, call: Call): Buffer {
+            val slot = waitFor(call) { slot(index).takeIf { it.url != null || it.pieces != null } }
+            val urls = listOfNotNull(slot.url) + slot.pieces.orEmpty().map { it.url }
+            if (slot.origin!!.toHttpUrl().host !in setOf(siteHost, MIRROR_HOST) || urls.any { !it.toHttpUrl().host.endsWith(IMAGE_DOMAIN) }) {
+                throw IOException("Unexpected page, open the chapter in WebView")
+            }
+            val page = slot.url?.let { Buffer().write(image(it, slot.origin)) }
+                ?: stitch(slot.pieces!!) { image(it, slot.origin) }
+            urls.forEach(images::remove)
+            return page
+        }
+
+        private suspend fun slot(index: Int): SlotDto {
+            lastUsed = TimeSource.Monotonic.markNow()
+            if (closed) throw IOException("The reader was closed, open the chapter again")
+            val scope = webView.await()
+            val script = "(${javaClass.getResource("/assets/slot.js")!!.readText()})($index)"
+            // No answer once the WebView is gone; null while the page is navigating.
+            val result = withTimeoutOrNull(SCRIPT_TIMEOUT) {
+                suspendCancellableCoroutine { continuation -> scope.evaluateJs(script) { continuation.resume(it) } }
+            }
+            val slot = result?.parseAs<SlotDto?>() ?: return SlotDto()
+            if (slot.error) {
+                if (reloads++ == MAX_RELOADS) throw IOException("The site is not responding, try again later")
+                scope.evaluateJs("location.reload()")
+                return SlotDto()
+            }
+            return slot
+        }
+
+        private suspend fun <T : Any> waitFor(call: Call?, block: suspend () -> T?): T = withTimeoutOrNull(PAGE_TIMEOUT) {
+            var result = block()
+            while (result == null) {
+                if (call?.isCanceled() == true) throw IOException("Canceled")
+                delay(POLL_INTERVAL)
+                result = block()
+            }
+            result
+        } ?: throw IOException("No pages found, open the chapter in WebView")
+
+        // The copy of an image the reader loaded, or the image itself when the reader's load failed or came from its
+        // own cache.
+        private suspend fun image(url: String, origin: String): ByteArray {
+            val bytes = images[url]?.let { shared -> runCatching { withTimeoutOrNull(IMAGE_TIMEOUT) { shared.await() } }.getOrNull() }
+            return bytes ?: client.get(url, Fetch.IMAGE.from("$origin/")).use { it.body.bytes() }
+        }
+    }
+
+    // The site often stops sending an API response just before its end. Read API bodies in full here, so a
+    // stalled one times out quickly and is asked for again.
+    private fun retryStalls(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        if (!request.url.encodedPath.startsWith("/api/")) return chain.proceed(request)
+        val stallChain = chain.withReadTimeout(STALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        var attempt = 1
+        while (true) {
+            try {
+                val response = stallChain.proceed(request)
+                val body = response.body.use { it.bytes().toResponseBody(it.contentType()) }
+                return response.newBuilder().body(body).build()
+            } catch (e: IOException) {
+                // A stall shows up as a read timeout, or as `IOException: timeout` from an HTTP/2 stream.
+                if (attempt++ == STALL_ATTEMPTS) throw e
+            }
+        }
     }
 
     private fun pageInterceptor(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        val url = request.url
-        return when (url.host) {
-            IMAGE_HOST -> {
-                val (chapterId, index) = url.pageRef()
-                val current = reader(chapterId)
-                var response = chain.proceed(request.newBuilder().url(current.images[index]).build())
-                if (response.code == 410) {
-                    response.close()
-                    response = chain.proceed(request.newBuilder().url(reader(chapterId, current).images[index]).build())
-                }
-                response
-            }
-            MAP_HOST -> {
-                val (chapterId, index) = url.pageRef()
-                val buffer = stitch(chapterId, index, chain.call())
-                Response.Builder()
-                    .request(request)
-                    .protocol(Protocol.HTTP_1_1)
-                    .code(200)
-                    .message("OK")
-                    .body(buffer.asResponseBody(JPEG_MEDIA_TYPE, buffer.size))
-                    .build()
-            }
-            else -> chain.proceed(request)
+        if (request.url.host != PAGE_HOST) return chain.proceed(request)
+        val ref = request.url.fragment!!.parseAs<PageRefDto>()
+        val buffer = try {
+            runBlocking { session(ref.chapter).page(ref.index, chain.call()) }
+        } catch (e: IOException) {
+            throw e
+        } catch (e: Exception) {
+            // An interceptor may only throw IOException.
+            throw IOException(e)
         }
+        return Response.Builder()
+            .request(request)
+            .protocol(Protocol.HTTP_1_1)
+            .code(200)
+            .message("OK")
+            .body(buffer.asResponseBody(null, buffer.size))
+            .build()
     }
 
-    // Signed pieces expire together, so a 410 on any of them means refetching the chapter to re-mint the map.
-    private fun stitch(chapterId: Int, index: Int, call: Call): Buffer {
-        val current = reader(chapterId)
-        tryStitch(current.maps[index], call)?.let { return it }
-        return tryStitch(reader(chapterId, current).maps[index], call) ?: throw IOException()
-    }
-
-    private fun tryStitch(map: MapEntryDto, call: Call): Buffer? {
-        val (columns, rows) = map.grid()
-        val (width, height) = map.dim
-        val page = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(page)
-        canvas.drawColor(Color.WHITE)
+    private suspend fun stitch(pieces: List<PieceDto>, image: suspend (String) -> ByteArray): Buffer {
+        var bitmap: Bitmap? = null
         try {
-            for (cell in 0 until columns * rows) {
-                if (call.isCanceled()) throw IOException("Canceled")
-                val response = runBlocking { client.get(map.pieces[map.order[cell]].toHttpUrl(), ensureSuccess = false) }
-                if (response.code == 410) {
-                    response.close()
-                    return null
+            lateinit var canvas: Canvas
+            for (piece in pieces) {
+                val decoded = ImageDecoder.decode(image(piece.url))
+                if (bitmap == null) {
+                    // The page's size, from the first piece's size and its share of the page.
+                    bitmap = Bitmap.createBitmap(
+                        (decoded.width / piece.width).roundToInt(),
+                        (decoded.height / piece.height).roundToInt(),
+                        Bitmap.Config.ARGB_8888,
+                    )
+                    bitmap.eraseColor(Color.WHITE)
+                    canvas = Canvas(bitmap)
                 }
-                val piece = ImageDecoder.decode(response.use { it.body.bytes() })
-                val column = cell % columns
-                val row = cell / columns
-                // Cell edges from exact fractions so a non-divisible width/height leaves no gap.
                 val destination = Rect(
-                    column * width / columns,
-                    row * height / rows,
-                    (column + 1) * width / columns,
-                    (row + 1) * height / rows,
+                    (piece.left * canvas.width).roundToInt(),
+                    (piece.top * canvas.height).roundToInt(),
+                    ((piece.left + piece.width) * canvas.width).roundToInt(),
+                    ((piece.top + piece.height) * canvas.height).roundToInt(),
                 )
-                canvas.drawBitmap(piece, null, destination, null)
-                piece.recycle()
+                canvas.drawBitmap(decoded, null, destination, null)
+                decoded.recycle()
             }
-            return Buffer().apply { page.compress(Bitmap.CompressFormat.JPEG, 90, outputStream()) }
+            return Buffer().apply { bitmap!!.compress(Bitmap.CompressFormat.JPEG, 90, outputStream()) }
         } finally {
-            page.recycle()
+            bitmap?.recycle()
         }
     }
-
-    // Loads the chapter's pages, deduping concurrent loads. `stale` is the expired copy a 410 is replacing;
-    // a load for it is skipped if another thread already re-minted the chapter.
-    private fun reader(chapterId: Int, stale: ReaderDto? = null): ReaderDto = runBlocking {
-        readerCache[chapterId]?.takeIf { it !== stale }?.let { return@runBlocking it }
-        readerMutex.withLock {
-            readerCache[chapterId]?.takeIf { it !== stale }?.let { return@runBlocking it }
-            // reader() runs inside the image interceptor, which may throw only IOException.
-            val data = try {
-                fetchReader(chapterId)
-            } catch (e: HttpException) {
-                throw IOException(e)
-            }
-            data?.also { readerCache.put(chapterId, it) } ?: throw IOException()
-        }
-    }
-
-    // --- Signing and device registration ---
-
-    private val registerMutex = Mutex()
-    private val readerMutex = Mutex()
-    private val readerCache = LruCache<Int, ReaderDto>(4)
-
-    @Volatile
-    private var deviceId: String? = null
-
-    @Volatile
-    private var deviceKey: PrivateKey? = null
-
-    private suspend fun signedGet(url: HttpUrl, readerSession: String? = null): Response {
-        val (id, key) = device()
-        val headers = ProChanSigner.readHeaders("GET", url, id, key).toMutableMap()
-        readerSession?.let { headers["X-ProChan-Reader-Session"] = it }
-        return client.get(url, headers.toHeaders())
-    }
-
-    private suspend fun device(): Pair<String, PrivateKey> {
-        deviceId?.let { id -> deviceKey?.let { return id to it } }
-        return registerMutex.withLock {
-            deviceId?.let { id -> deviceKey?.let { return@withLock id to it } }
-            val storedId = preferences.getString(DEVICE_ID_KEY, null)
-            val storedKey = preferences.getString(DEVICE_KEY_KEY, null)
-            if (storedId != null && storedKey != null) {
-                val key = ProChanSigner.decodePrivateKey(storedKey)
-                deviceId = storedId
-                deviceKey = key
-                storedId to key
-            } else {
-                register()
-            }
-        }
-    }
-
-    private suspend fun register(): Pair<String, PrivateKey> {
-        val keyPair = ProChanSigner.newKeyPair()
-        val url = "$apiUrl/api/android/device/register".toHttpUrl()
-        val body = RegisterRequestDto(ProChanSigner.encodePublicKey(keyPair.public)).toJsonString().toByteArray()
-        val headers = ProChanSigner.registerHeaders(url, body)
-        val id = client.post(url, headers.toHeaders(), body.toRequestBody(JSON_MEDIA_TYPE))
-            .parseAs<RegisterResponseDto>().deviceId
-        preferences.edit()
-            .putString(DEVICE_ID_KEY, id)
-            .putString(DEVICE_KEY_KEY, ProChanSigner.encodePrivateKey(keyPair.private))
-            .apply()
-        deviceId = id
-        deviceKey = keyPair.private
-        return id to keyPair.private
-    }
-
-    // --- Filters ---
 
     override val supportsFilterFetching = true
 
-    override suspend fun fetchFilterData(): JsonElement = signedGet("$apiUrl/api/android/feed/genres".toHttpUrl().newBuilder().addQueryParameter("g", "1").build())
-        .parseAs<GenresWrapperDto>().data.toJsonElement()
+    override suspend fun fetchFilterData(): JsonElement = client.get("$baseUrl/api/categories/series/genres", Fetch.XHR)
+        .parseAs<JsonElement>()
 
     override fun getFilterList(data: JsonElement?): FilterList {
         val genres = data?.parseAs<List<GenreDto>>().orEmpty()
         return FilterList(
             buildList {
                 add(TypeFilter())
+                add(StatusFilter())
+                add(YearFilter())
                 add(SortFilter())
                 if (genres.isNotEmpty()) add(GenreFilter(genres))
             },
@@ -366,46 +516,27 @@ abstract class Procomic :
         }.also(screen::addPreference)
     }
 
-    private fun chapterApiUrl(id: Int) = "$apiUrl/api/android/chapter/$id".toHttpUrl()
-
-    private fun contentApiUrl(id: Int) = "$apiUrl/api/android/content/$id".toHttpUrl().newBuilder()
-        .addQueryParameter("g", "1")
-        .build()
-
-    private fun pageUrl(host: String, chapterId: Int, index: Int) = HttpUrl.Builder()
-        .scheme("http")
-        .host(host)
-        .addPathSegment(chapterId.toString())
-        .addQueryParameter("i", index.toString())
-        .build()
-        .toString()
-
-    private fun HttpUrl.pageRef() = pathSegments[0].toInt() to queryParameter("i")!!.toInt()
-
-    // "grid_CxR" = C columns by R rows; "vertical_N" = N full-height columns.
-    private fun MapEntryDto.grid(): Pair<Int, Int> = when {
-        mode.startsWith("vertical_") -> mode.removePrefix("vertical_").toInt() to 1
-        else -> mode.removePrefix("grid_").split("x").let { (columns, rows) -> columns.toInt() to rows.toInt() }
-    }
-
-    private inline fun <T> runCatchingHttp(block: () -> T): T? = try {
-        block()
-    } catch (_: HttpException) {
-        null
-    }
-
     companion object {
-        private const val API_HOST = "pro-chan.com"
+        private const val LIST_LIMIT = 12
+        private const val GENRE_LIST_LIMIT = 50
+        private const val CHAPTER_LIMIT = 100
         private const val MIRROR_HOST = "procomic.net"
         private val LOCALES = setOf("ar", "en")
-        private const val LIST_LIMIT = 50
-        private const val CHAPTER_LIMIT = 100
-        private const val IMAGE_HOST = "procomic.image"
-        private const val MAP_HOST = "procomic.map"
-        private const val DEVICE_ID_KEY = "device_id"
-        private const val DEVICE_KEY_KEY = "device_key"
+        private const val IMAGE_DOMAIN = ".procomic.im"
+
+        // Kept from the versions that stitched pieces here, so page lists cached by the app still load.
+        private const val PAGE_HOST = "procomic.pieces"
+        private const val TURNSTILE_SITE_KEY = "0x4AAAAAACk1d7qWJi_of2qU"
+        private val POLL_INTERVAL = 750.milliseconds
+        private const val MAX_RELOADS = 2
+        private const val MAX_SESSIONS = 2
+        private val SESSION_TIMEOUT = 2.hours
+        private val IDLE_TIMEOUT = 5.minutes
+        private val PAGE_TIMEOUT = 2.minutes
+        private val IMAGE_TIMEOUT = 5.seconds
+        private val SCRIPT_TIMEOUT = 10.seconds
+        private const val STALL_TIMEOUT_SECONDS = 5
+        private const val STALL_ATTEMPTS = 4
         private const val SHOW_LOCKED_KEY = "showLockedChapters"
-        private val JSON_MEDIA_TYPE = "application/json".toMediaType()
-        private val JPEG_MEDIA_TYPE = "image/jpeg".toMediaType()
     }
 }
