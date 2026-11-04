@@ -10,25 +10,44 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 class CustomUrlPreferences(
     private val preferences: SharedPreferences,
-    private val defaultUrl: String,
+    private val hardcodedUrl: String = "",
     private val title: String,
     private val dialogMessage: String,
-) {
+    defaultUrl: String = hardcodedUrl,
+) : FetchableBaseUrl {
     private val prefBaseKey = "overrideBaseUrl"
     private val prefDefaultKey = "defaultBaseUrl"
+    private val prefFetchedKey = "fetchedBaseUrl"
+
+    private val effectiveHardcodedUrl: String =
+        hardcodedUrl.ifEmpty { defaultUrl }
+
+    private val defaultUrl: String
+        get() = preferences.getString(prefFetchedKey, null) ?: effectiveHardcodedUrl
 
     init {
         val storedDefault = preferences.getString(prefDefaultKey, null)
-        if (storedDefault != defaultUrl) {
+        if (storedDefault != effectiveHardcodedUrl) {
             preferences.edit()
-                .putString(prefBaseKey, defaultUrl)
-                .putString(prefDefaultKey, defaultUrl)
+                .putString(prefBaseKey, effectiveHardcodedUrl)
+                .putString(prefDefaultKey, effectiveHardcodedUrl)
+                .remove(prefFetchedKey)
                 .apply()
         }
     }
 
     val baseUrl: String
         get() = preferences.getString(prefBaseKey, defaultUrl) ?: defaultUrl
+
+    override fun update(urls: List<String>) {
+        val url = urls.first()
+        // A typed url stays until the site moves
+        if (url == preferences.getString(prefFetchedKey, null)) return
+        preferences.edit()
+            .putString(prefBaseKey, url)
+            .putString(prefFetchedKey, url)
+            .apply()
+    }
 
     fun setupPreferenceScreen(screen: PreferenceScreen) {
         EditTextPreference(screen.context).apply {

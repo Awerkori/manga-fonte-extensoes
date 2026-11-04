@@ -149,6 +149,17 @@ abstract class KeiSource : HttpSource() {
      */
     protected open fun Headers.Builder.configureHeaders(): Headers.Builder = this
 
+    /**
+     * Base url preferences of a source overriding [fetchBaseUrls].
+     * Do not override by hand.
+     */
+    protected open val fetchableBaseUrl: FetchableBaseUrl? get() = null
+
+    /**
+     * Fetches the site's current base urls, in the site's order: one url, or every mirror it lists.
+     */
+    protected open suspend fun fetchBaseUrls(client: okhttp3.OkHttpClient): List<String> = emptyList()
+
     final override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
         .set("Origin", baseUrl)
