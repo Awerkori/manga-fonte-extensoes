@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.post
 import keiyoushi.network.rateLimit
@@ -54,7 +55,7 @@ abstract class AnimeXNovel : KeiSource() {
     // ========================== Latest ====================================
 
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val mangas = client.get(baseUrl).asJsoup()
+        val mangas = client.get(baseUrl, Fetch.DOCUMENT).asJsoup()
             .select("div:contains(Últimos Mangás) + .axn-piz-container .axn-piz-card")
             .map(::mangaFromElement)
         return MangasPage(mangas, hasNextPage = false)
@@ -83,7 +84,7 @@ abstract class AnimeXNovel : KeiSource() {
                     .forEach { filter -> add("terms[]", filter.id) }
             }
             .build()
-        return client.post("$baseUrl/wp-admin/admin-ajax.php", form).asJsoup().let(::searchMangaParse)
+        return client.post("$baseUrl/wp-admin/admin-ajax.php", Fetch.DOCUMENT, form).asJsoup().let(::searchMangaParse)
     }
 
     private var lastManga: SManga? = null
@@ -106,7 +107,7 @@ abstract class AnimeXNovel : KeiSource() {
 
     // ========================== Details ===================================
 
-    override suspend fun getMangaByUrl(url: okhttp3.HttpUrl): SManga = parseMangaDetails(client.get(url).asJsoup(), url.toString())
+    override suspend fun getMangaByUrl(url: okhttp3.HttpUrl): SManga = parseMangaDetails(client.get(url, Fetch.DOCUMENT).asJsoup(), url.toString())
 
     private fun parseMangaDetails(document: Document, url: String) = SManga.create().apply {
         title = document.selectFirst("h1")!!.text()
@@ -129,7 +130,7 @@ abstract class AnimeXNovel : KeiSource() {
 
     // ========================== Chapters ==================================
 
-    override suspend fun fetchMangaUpdate(manga: SManga, chapters: List<SChapter>, fetchDetails: Boolean, fetchChapters: Boolean) = client.get(getMangaUrl(manga)).asJsoup().let { document ->
+    override suspend fun fetchMangaUpdate(manga: SManga, chapters: List<SChapter>, fetchDetails: Boolean, fetchChapters: Boolean) = client.get(getMangaUrl(manga), Fetch.DOCUMENT).asJsoup().let { document ->
         eu.kanade.tachiyomi.source.model.SMangaUpdate(
             if (fetchDetails) parseMangaDetails(document, getMangaUrl(manga)) else manga,
             if (fetchChapters) fetchChapterList(document) else chapters,
@@ -148,7 +149,7 @@ abstract class AnimeXNovel : KeiSource() {
         var page = 1
         while (true) {
             url.setQueryParameter("page", page.toString())
-            val response = client.get(url.build(), ensureSuccess = false)
+            val response = client.get(url.build(), Fetch.XHR, ensureSuccess = false)
             if (!response.isSuccessful) break
             chapters += chapterListParse(response)
             page++
@@ -166,7 +167,7 @@ abstract class AnimeXNovel : KeiSource() {
     private val pageContainerSelector = ".spice-block-img-gallery, .wp-block-gallery, .spnc-entry-content"
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val document = client.get(getChapterUrl(chapter)).asJsoup()
+        val document = client.get(getChapterUrl(chapter), Fetch.DOCUMENT).asJsoup()
         val images = document.selectFirst(pageContainerSelector)?.select("img")
             ?: document.select("article .entry-content img[src*=/wp-content/uploads/]")
         return images.mapIndexed { index, element ->
