@@ -113,6 +113,40 @@ def validate_catalog_integrity(final_extensions: list[index_pb2.Extension]) -> N
         )
 
 
+def validate_catalogs_consistency(
+    final_extensions: list[index_pb2.Extension],
+    legacy_index: list[dict],
+    release_assets: dict,
+    has_release_assets: bool = True,
+) -> None:
+    """Fail-closed validation across index.json, index.min.json, and release-assets.json."""
+    final_pkgs = {ext.packageName for ext in final_extensions}
+    legacy_pkgs = {entry["pkg"] for entry in legacy_index}
+
+    diff_legacy = legacy_pkgs ^ final_pkgs
+    if diff_legacy:
+        in_legacy_only = legacy_pkgs - final_pkgs
+        in_final_only = final_pkgs - legacy_pkgs
+        print(f"CATALOG_CONSISTENCY_ERROR: index.json ({len(final_pkgs)}) and index.min.json ({len(legacy_pkgs)}) diverge!")
+        if in_legacy_only:
+            print(f"  In index.min.json only: {sorted(in_legacy_only)}")
+        if in_final_only:
+            print(f"  In index.json only: {sorted(in_final_only)}")
+        raise ValueError(
+            f"CATALOG_CONSISTENCY_ERROR: index.json and index.min.json diverged by {len(diff_legacy)} packages"
+        )
+
+    if has_release_assets and len(release_assets) >= len(final_pkgs):
+        assets_pkgs = set(release_assets.keys())
+        missing_assets = final_pkgs - assets_pkgs
+        if missing_assets:
+            print(f"CATALOG_CONSISTENCY_ERROR: packages missing from release-assets.json: {sorted(missing_assets)}")
+            raise ValueError(
+                f"CATALOG_CONSISTENCY_ERROR: {len(missing_assets)} packages in index.json lack release-assets.json entries"
+            )
+    print("CROSS_CATALOG_CONSISTENCY_CHECK=PASS")
+
+
 def main():
     to_delete: list[str] = json.loads(sys.argv[1])
     current_sha = sys.argv[2]
@@ -343,10 +377,18 @@ def main():
 
     legacy_path = REPO_DIR / "index.min.json"
     legacy_entries = json.loads(legacy_path.read_text(encoding="utf-8")) if legacy_path.exists() else []
+    active_packages = {ext.packageName for ext in final_extensions}
     legacy_index = update_legacy_index(
         legacy_entries,
         [ext for ext, _, _, _, _ in new_extensions] if legacy_path.exists() else final_extensions,
         deleted_packages,
+        active_packages=active_packages,
+    )
+    validate_catalogs_consistency(
+        final_extensions,
+        legacy_index,
+        updated_release_assets,
+        has_release_assets=release_assets_path.exists(),
     )
 
     index = index_pb2.Index(

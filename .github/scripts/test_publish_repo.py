@@ -111,9 +111,41 @@ class LegacyIndexTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             update_legacy_index([], [ext], [])
 
+    def test_ghost_packages_pruned_when_active_packages_specified(self):
+        active = {PREFIX + "geasscomics", PREFIX + "karikari"}
+        result = update_legacy_index(self.old, [], [], active_packages=active)
+        self.assertEqual({e["pkg"] for e in result}, active)
+        self.assertNotIn(PREFIX + "onereader", {e["pkg"] for e in result})
+
 
 @unittest.skipUnless(HAS_PROTOBUF, "protobuf is required for publisher tests")
 class PublisherTest(unittest.TestCase):
+    def test_validate_catalogs_consistency_passes_when_matching(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("publish_repo", SCRIPT)
+        pub = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pub)
+
+        exts = [extension(), extension("karikari", 1)]
+        leg = [legacy(e) for e in exts]
+        assets = {e.packageName: {"apk": {}} for e in exts}
+
+        # Should pass without exception
+        pub.validate_catalogs_consistency(exts, leg, assets, has_release_assets=True)
+
+    def test_validate_catalogs_consistency_fails_on_divergence(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("publish_repo", SCRIPT)
+        pub = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pub)
+
+        exts = [extension()]
+        leg = [legacy(extension()), legacy(extension("ghost", 1))]
+        assets = {extension().packageName: {"apk": {}}}
+
+        with self.assertRaises(ValueError) as ctx:
+            pub.validate_catalogs_consistency(exts, leg, assets, has_release_assets=True)
+        self.assertIn("CATALOG_CONSISTENCY_ERROR", str(ctx.exception))
     def simulate(self, modern, old, update=None, deleted=()):
         with tempfile.TemporaryDirectory(prefix="nox-publisher-test-") as directory:
             root = Path(directory)

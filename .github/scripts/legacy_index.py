@@ -3,7 +3,7 @@ from urllib.parse import unquote, urlsplit
 import index_pb2
 
 
-def update_legacy_index(existing, published, removed_modules):
+def update_legacy_index(existing, published, removed_modules, active_packages=None):
     """Apply the same explicit publication batch to the historical v1 catalog."""
     previous = {entry["pkg"]: entry for entry in existing}
     removed_set = set(removed_modules)
@@ -12,8 +12,14 @@ def update_legacy_index(existing, published, removed_modules):
         for package, entry in previous.items()
         if package not in removed_set and not any(package.endswith(f".{module}") for module in removed_set)
     }
+    if active_packages is not None:
+        active_set = set(active_packages)
+        entries = {package: entry for package, entry in entries.items() if package in active_set}
+
     for extension in published:
         package = extension.packageName
+        if active_packages is not None and package not in active_set:
+            continue
         old = previous.get(package, {})
         old_sources = {str(source["id"]): source for source in old.get("sources", [])}
         sources = [
