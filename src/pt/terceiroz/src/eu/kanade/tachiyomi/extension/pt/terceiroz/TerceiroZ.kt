@@ -108,7 +108,7 @@ abstract class TerceiroZ : KeiSource() {
         return images.mapIndexed { index, image -> Page(index, url, image) }
     }
 
-    override fun imageRequest(page: Page): Request = Request.Builder()
+    override fun getImageRequest(page: Page): Request = Request.Builder()
         .url(page.imageUrl!!).headers(headers.newBuilder().set("Referer", page.url).build()).get().build()
 
     override fun getFilterList(data: JsonElement?): FilterList = FilterList(

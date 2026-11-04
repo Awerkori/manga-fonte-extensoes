@@ -44,10 +44,10 @@ abstract class NeoToons : KeiSource() {
         set("Referer", "$baseUrl/")
     }
 
-    override fun imageRequest(page: Page): Request {
+    override fun getImageRequest(page: Page): Request {
         val imageUrl = page.imageUrl
         if (imageUrl.isNullOrBlank()) {
-            return super.imageRequest(page)
+            return super.getImageRequest(page)
         }
         return buildNeoToonsImageRequest(imageUrl, baseUrl, headers)
     }

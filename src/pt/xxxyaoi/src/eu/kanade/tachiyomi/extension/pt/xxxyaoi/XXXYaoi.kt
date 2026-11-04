@@ -161,7 +161,7 @@ abstract class XXXYaoi : MadaraNoAjax() {
 
     // Image requests must not inherit document headers (Origin/Sec-Fetch/HTML Accept).
     // Cookies are still supplied by the same source client and its CookieJar.
-    override fun imageRequest(page: Page): Request = buildImageRequest(page, headers["User-Agent"])
+    override fun getImageRequest(page: Page): Request = buildImageRequest(page, headers["User-Agent"])
 
     override fun getFilterList(data: JsonElement?) = FilterList(
         *super.getFilterList(data).toTypedArray(),

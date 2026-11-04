@@ -6,13 +6,17 @@ plugins {
 
 keiyoushi {
     name = "Nexus Toons"
-    versionCode = 63
-    contentWarning = ContentWarning.NSFW // or MIXED, please confirm
+    versionCode = 3
+    contentWarning = ContentWarning.MIXED
     libVersion = "1.6"
 
     source {
         lang = "pt-BR"
-        baseUrl = "https://nx-toons.xyz"
+        baseUrl = "https://nexustoons.com"
         id = 5304928452449566995L
+    }
+
+    deeplink {
+        path("/manga/..*")
     }
 }

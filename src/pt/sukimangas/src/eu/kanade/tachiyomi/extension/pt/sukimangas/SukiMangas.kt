@@ -51,10 +51,10 @@ abstract class SukiMangas : KeiSource() {
         set("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
     }
 
-    override fun imageRequest(page: Page): Request {
+    override fun getImageRequest(page: Page): Request {
         val imageUrl = page.imageUrl
         if (imageUrl.isNullOrBlank()) {
-            return super.imageRequest(page)
+            return super.getImageRequest(page)
         }
         return buildSukiMangasImageRequest(imageUrl, baseUrl, headers)
     }

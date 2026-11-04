@@ -178,8 +178,8 @@ abstract class MangaLivreLat : KeiSource() {
         }
     }
 
-    override fun imageRequest(page: Page): Request {
-        val imageUrl = page.imageUrl ?: return super.imageRequest(page)
+    override fun getImageRequest(page: Page): Request {
+        val imageUrl = page.imageUrl ?: return super.getImageRequest(page)
         return GET(imageUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())
     }
 

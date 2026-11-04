@@ -503,7 +503,7 @@ abstract class MangaLivre :
         }
     }
 
-    override fun imageRequest(page: Page): Request {
+    override fun getImageRequest(page: Page): Request {
         if (page.index == 0) {
             Log.d("ToonLivrePerf", "first_image_request page=0 t=${SystemClock.elapsedRealtime()}")
         }

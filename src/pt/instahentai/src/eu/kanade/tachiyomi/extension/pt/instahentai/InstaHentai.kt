@@ -88,7 +88,7 @@ abstract class InstaHentai : KeiSource() {
         return images.mapIndexed { index, image -> Page(index, url = echoUrlString, imageUrl = image) }
     }
 
-    override fun imageRequest(page: Page): Request = Request.Builder()
+    override fun getImageRequest(page: Page): Request = Request.Builder()
         .url(page.imageUrl!!).headers(headers.newBuilder().set("Referer", page.url).build()).get().build()
 
     override fun getFilterList(data: JsonElement?): FilterList = FilterList()

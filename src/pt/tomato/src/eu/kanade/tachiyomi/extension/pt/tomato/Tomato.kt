@@ -211,7 +211,7 @@ abstract class Tomato :
         return SMangaUpdate(updated, result)
     }
     override suspend fun getPageList(chapter: SChapter): List<Page> = client.get("$API_URL/manga/pages/query/${chapter.url.substringAfterLast('/')}", apiHeaders()).parseAs<PagesResponseDto>().data.mapIndexed { i, item -> Page(i, imageUrl = item.pageUrl) }
-    override fun imageRequest(page: Page): Request = super.imageRequest(page).newBuilder().header("Accept", "image/webp,image/png,image/jpeg,*/*;q=0.8").build()
+    override fun getImageRequest(page: Page): Request = super.getImageRequest(page).newBuilder().header("Accept", "image/webp,image/png,image/jpeg,*/*;q=0.8").build()
     override val supportsFilterFetching = true
     override suspend fun fetchFilterData(): JsonElement = client.get("$API_URL/v2/content/categories", apiHeaders()).parseAs<CategoriesResponseDto>().categories.map(CategoryDto::name).toJsonElement()
     override fun getFilterList(data: JsonElement?) = getFilters(data)

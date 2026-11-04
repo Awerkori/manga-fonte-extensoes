@@ -229,7 +229,7 @@ abstract class KuroMangas :
 
     // ============================= Pages ==================================
 
-    override fun imageRequest(page: Page): Request {
+    override fun getImageRequest(page: Page): Request {
         val imageHeaders = headers.newBuilder()
             .removeAll("Origin")
             .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")

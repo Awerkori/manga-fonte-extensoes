@@ -44,8 +44,8 @@ abstract class ManHQ : KeiSource() {
         set("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
     }
 
-    override fun imageRequest(page: Page): Request {
-        val imageUrl = page.imageUrl ?: return super.imageRequest(page)
+    override fun getImageRequest(page: Page): Request {
+        val imageUrl = page.imageUrl ?: return super.getImageRequest(page)
         return GET(
             imageUrl,
             headers.newBuilder()

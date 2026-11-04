@@ -762,7 +762,7 @@ abstract class LycanToons : KeiSource() {
         }
     }
 
-    override fun imageRequest(page: Page): Request {
+    override fun getImageRequest(page: Page): Request {
         val imageUrl = page.imageUrl
             ?: throw Exception("URL da página não informada")
         return buildLycanImageRequest(imageUrl, baseUrl, headers)

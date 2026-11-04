@@ -33,12 +33,12 @@ abstract class HentaitecaNet : KeiSource() {
         set("Referer", "$baseUrl/")
     }
 
-    override fun imageRequest(page: Page): Request {
+    override fun getImageRequest(page: Page): Request {
         val imageHeaders = headersBuilder()
             .set("Referer", "$baseUrl/")
             .build()
 
-        return super.imageRequest(page).newBuilder()
+        return super.getImageRequest(page).newBuilder()
             .headers(imageHeaders)
             .build()
     }

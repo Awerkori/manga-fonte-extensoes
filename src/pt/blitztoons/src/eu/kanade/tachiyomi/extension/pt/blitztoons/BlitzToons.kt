@@ -34,7 +34,7 @@ abstract class BlitzToons : KeiSource() {
         set("User-Agent", BLITZTOONS_USER_AGENT)
     }
 
-    override fun imageRequest(page: Page): Request = buildBlitzImageRequest(page.imageUrl!!, baseUrl, headers)
+    override fun getImageRequest(page: Page): Request = buildBlitzImageRequest(page.imageUrl!!, baseUrl, headers)
 
     override suspend fun getPopularManga(page: Int): MangasPage {
         val url = "$baseUrl/obras".toHttpUrl().newBuilder()

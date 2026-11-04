@@ -344,7 +344,7 @@ abstract class BlackoutComics :
         }
     }
 
-    override fun imageRequest(page: Page): Request {
+    override fun getImageRequest(page: Page): Request {
         val imageHeaders = headersBuilder()
             .set("Accept", "image/*")
             .set("Sec-Fetch-Dest", "empty")
