@@ -1,14 +1,14 @@
 {
   "incompatibilities": {
     "src/pt/megahentai": {
-      "attempts": 8,
+      "attempts": 9,
       "cause": "Cannot infer type for type parameter 'T'. Specify it explicitly.",
       "compilation_evidence": "e: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/build/generated/ksp/release/kotlin/keiyoushi/source/Generated.kt:7:10 Class 'Generated' is not abstract and does not implement abstract base class members:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/build/generated/ksp/release/kotlin/keiyoushi/source/Generated.kt:7:10 Class 'Generated' is not abstract and does not implement abstract members:\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/src/eu/kanade/tachiyomi/extension/pt/megahentai/MegaHentai.kt:4:36 Unresolved reference 'asObservableSuccess'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/src/eu/kanade/tachiyomi/extension/pt/megahentai/MegaHentai.kt:12:28 Unresolved reference 'util'.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/src/eu/kanade/tachiyomi/extension/pt/megahentai/MegaHentai.kt:38:5 'popularMangaRequest' overrides nothing.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/src/eu/kanade/tachiyomi/extension/pt/megahentai/MegaHentai.kt:43:5 'popularMangaParse' overrides nothing.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/src/eu/kanade/tachiyomi/extension/pt/megahentai/MegaHentai.kt:47:5 'latestUpdatesRequest' overrides nothing.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/src/eu/kanade/tachiyomi/extension/pt/megahentai/MegaHentai.kt:52:5 'latestUpdatesParse' overrides nothing.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/src/eu/kanade/tachiyomi/extension/pt/megahentai/MegaHentai.kt:55:5 'fetchSearchManga' overrides nothing.\ne: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/pt/megahentai/src/eu/kanade/tachiyomi/extension/pt/megahentai/MegaHent",
       "dependencies": [
         ":core"
       ],
       "incompatibility_type": "KSP_CODEGEN_ERROR",
-      "last_attempt_at": "2026-11-07T05:05:38.010880+00:00",
+      "last_attempt_at": "2026-11-07T05:13:11.889900+00:00",
       "last_functional_version": {
         "android_code": 104001,
         "lib": "1.4",
@@ -16,7 +16,7 @@
         "raw": 1
       },
       "module": "src/pt/megahentai",
-      "next_attempt_at": "2026-11-07T05:20:38.010899+00:00",
+      "next_attempt_at": "2026-11-07T05:28:11.889914+00:00",
       "recovery_state": "DEFERRED_INCOMPATIBLE",
       "upstream_commit": "b647c92fd1"
     }
