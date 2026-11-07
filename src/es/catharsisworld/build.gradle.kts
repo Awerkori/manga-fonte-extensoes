@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "Catharsis World"
-    versionCode = 6
+    versionCode = 7
     contentWarning = ContentWarning.MIXED
     libVersion = "1.6"
 
@@ -21,4 +21,8 @@ keiyoushi {
     deeplink {
         path("/manga/..*")
     }
+}
+
+dependencies {
+    implementation(project(":lib:cronet"))
 }
