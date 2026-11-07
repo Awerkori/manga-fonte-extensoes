@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "Lunar Manga"
-    versionCode = 7
+    versionCode = 8
     contentWarning = ContentWarning.MIXED
     libVersion = "1.6"
 
@@ -16,6 +16,11 @@ keiyoushi {
         "id",
         "ja",
     )
+
+    deeplink {
+        host("lunarx.to")
+        path("/manga/..*")
+    }
 
     languages.forEach { language ->
         source {
