@@ -45,7 +45,7 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           TRIGGER_SOURCE: ${{ github.event.inputs.trigger_source || 'manual' }}
           CURRENT_RUN_ID: ${{ github.run_id }}
-        run: python .github/scripts/pulse_guard.py watchdog-check
+        run: python .github/scripts/pulse_guard.py --defer-transient watchdog-check
 
       - name: Configure Git
         if: steps.guard.conclusion == 'success' && steps.guard.outputs.should_run_sync == 'true'
@@ -54,6 +54,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Sync upstream
+        id: sync
         if: steps.guard.conclusion == 'success' && steps.guard.outputs.should_run_sync == 'true'
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
@@ -137,9 +138,9 @@ jobs:
           done
 
       - name: Trigger next check (24/7 cloud pulse)
-        if: always() && !cancelled() && steps.guard.conclusion == 'success' && steps.guard.outputs.should_run_sync == 'true'
+        if: always() && !cancelled() && steps.guard.conclusion == 'success' && steps.guard.outputs.should_run_sync == 'true' && steps.sync.conclusion == 'success'
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           TRIGGER_SOURCE: ${{ github.event.inputs.trigger_source || 'manual' }}
           CURRENT_RUN_ID: ${{ github.run_id }}
-        run: python .github/scripts/pulse_guard.py pulse-dispatch --sleep-seconds 300
+        run: python .github/scripts/pulse_guard.py --defer-transient pulse-dispatch --sleep-seconds 300

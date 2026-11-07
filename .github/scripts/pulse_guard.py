@@ -11,18 +11,22 @@ Coordinates the 5-minute recursive pulse and the 15-minute watchdog cron:
 3. Pre-dispatch anti-split brain guard: queries GitHub API for other active runs before
    dispatching next pulse. If another run is queued/in_progress, skips dispatch (SKIPPED_ALREADY_ACTIVE).
    FAIL-CLOSED: if query fails, heartbeat refuses to dispatch in the dark (SKIPPED_ACTIVE_STATE_UNKNOWN).
-4. Controlled retry backoff: retries dispatch up to 3 times (10s, 20s, 30s) instead of masking with `|| true`.
-5. Structured pulse status logging with ACTIVE_RUN_CHECK, ACTIVE_RUN_CHECK_ATTEMPTS, ACTIVE_RUN_CHECK_ERROR.
+4. Controlled retry backoff: retries dispatch up to 3 times (10s, 20s, 30s + jitter) with Retry-After respect.
+5. Error differentiation: distinguishes 401 (fatal auth) from 403/429 (rate limits) and 500/502/503 (server errors).
+6. Resilient continuity: optionally defers transient dispatch failures to the 15-min watchdog cron (--defer-transient).
+7. Structured pulse status logging with ACTIVE_RUN_CHECK, ACTIVE_RUN_CHECK_ATTEMPTS, ACTIVE_RUN_CHECK_ERROR.
 """
 
 import argparse
 from dataclasses import dataclass
 import json
 import os
+import random
+import re
 import subprocess
 import sys
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 @dataclass
@@ -31,6 +35,8 @@ class ActiveRunsResult:
     runs: List[int]
     attempts: int
     error: Optional[str] = None
+    error_type: Optional[str] = None
+    retry_after: Optional[int] = None
 
     @property
     def is_ok(self) -> bool:
@@ -46,6 +52,55 @@ def set_github_output(key: str, value: str) -> None:
     if output_path:
         with open(output_path, "a", encoding="utf-8") as f:
             f.write(f"{key}={value}\n")
+
+
+def classify_github_error(error_msg: str, returncode: int = 1) -> Tuple[str, Optional[int]]:
+    """
+    Classify GitHub CLI / API error message and extract Retry-After or reset delay.
+    Returns: (error_type, retry_after_seconds)
+    """
+    msg = (error_msg or "").lower()
+    retry_after: Optional[int] = None
+
+    # Check for Retry-After or wait hints
+    retry_match = re.search(r"(?:retry-after[:=\s]+|retry after\s+|wait\s+)(\d+)", error_msg or "", re.IGNORECASE)
+    if retry_match:
+        try:
+            retry_after = int(retry_match.group(1))
+        except ValueError:
+            pass
+
+    # Check for x-ratelimit-reset epoch timestamp
+    reset_match = re.search(r"x-ratelimit-reset[:=\s]+(\d+)", error_msg or "", re.IGNORECASE)
+    if reset_match:
+        try:
+            epoch = int(reset_match.group(1))
+            now = int(time.time())
+            if epoch > now:
+                retry_after = epoch - now
+        except ValueError:
+            pass
+
+    # 1. Authentication failure (fatal, human action required)
+    if any(k in msg for k in [
+        "401", "bad credentials", "requires authentication",
+        "authentication failed", "could not read username"
+    ]) and not ("rate limit" in msg or "secondary rate" in msg):
+        return ("AUTH_ERROR", retry_after)
+
+    # 2. Rate limit (403 rate limit, 429)
+    if "rate limit" in msg or "secondary rate" in msg or "429" in msg or "too many requests" in msg:
+        return ("RATE_LIMIT", retry_after)
+
+    # 3. Server errors (500, 502, 503, 504)
+    if any(k in msg for k in [
+        "http 500", "http 502", "http 503", "http 504",
+        "500 internal", "502 bad gateway", "503 service", "504 gateway",
+        "server error", "bad gateway", "service unavailable", "gateway timeout"
+    ]):
+        return ("SERVER_ERROR", retry_after)
+
+    return ("UNKNOWN", retry_after)
 
 
 def log_pulse_status(
@@ -89,11 +144,13 @@ def get_active_runs(
     repo: Optional[str] = None,
     max_retries: int = 3,
     backoff_delays: Optional[List[int]] = None,
+    allow_jitter: bool = True,
 ) -> ActiveRunsResult:
     """
     Queries gh run list to find active runs (queued or in_progress) of the given workflow,
     excluding current_run_id.
     FAIL-CLOSED: Returns status="FAILED" if all retries are exhausted. Never returns [] on error.
+    Respects rate limits, Retry-After, exponential backoff with jitter, and fatal auth classification.
     """
     if backoff_delays is None:
         backoff_delays = [2, 4, 6]
@@ -108,6 +165,9 @@ def get_active_runs(
         cmd.extend(["-R", repo])
 
     last_error = ""
+    err_type = "UNKNOWN"
+    retry_after = None
+
     for attempt in range(1, max_retries + 1):
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -129,22 +189,57 @@ def get_active_runs(
                     runs=active,
                     attempts=attempt,
                     error=None,
+                    error_type=None,
+                    retry_after=None,
                 )
             else:
                 last_error = res.stderr.strip() or f"exit code {res.returncode}"
+                err_type, retry_after = classify_github_error(last_error, res.returncode)
                 print(
-                    f"[Pulse Guard] Warning: 'gh run list' attempt {attempt}/{max_retries} failed: {last_error}",
+                    f"[Pulse Guard] Warning: 'gh run list' attempt {attempt}/{max_retries} failed ({err_type}): {last_error}",
                     file=sys.stderr,
                 )
         except Exception as e:
             last_error = str(e)
+            err_type, retry_after = classify_github_error(last_error)
             print(
                 f"[Pulse Guard] Warning: Exception querying 'gh run list' (attempt {attempt}/{max_retries}): {e}",
                 file=sys.stderr,
             )
 
+        # Fatal auth error -> do not retry
+        if err_type == "AUTH_ERROR":
+            return ActiveRunsResult(
+                status="FAILED",
+                runs=[],
+                attempts=attempt,
+                error=last_error,
+                error_type="AUTH_ERROR",
+                retry_after=None,
+            )
+
+        # Rate limit with long reset -> do not hammer API
+        if err_type == "RATE_LIMIT" and retry_after is not None and retry_after > 15:
+            print(
+                f"[Pulse Guard] Rate limit reset is in {retry_after}s. Halting query retries to protect quota.",
+                file=sys.stderr,
+            )
+            return ActiveRunsResult(
+                status="FAILED",
+                runs=[],
+                attempts=attempt,
+                error=last_error,
+                error_type="RATE_LIMIT",
+                retry_after=retry_after,
+            )
+
         if attempt < max_retries:
-            delay = backoff_delays[min(attempt - 1, len(backoff_delays) - 1)]
+            if retry_after is not None and 0 < retry_after <= 15:
+                delay = float(retry_after)
+            else:
+                delay = float(backoff_delays[min(attempt - 1, len(backoff_delays) - 1)])
+            if allow_jitter and delay > 0:
+                delay += random.uniform(0.1, 1.0)
             time.sleep(delay)
 
     return ActiveRunsResult(
@@ -152,6 +247,8 @@ def get_active_runs(
         runs=[],
         attempts=max_retries,
         error=last_error or "Unknown failure querying gh run list",
+        error_type=err_type,
+        retry_after=retry_after,
     )
 
 
@@ -186,7 +283,10 @@ def cmd_watchdog_check(args: argparse.Namespace) -> int:
 
     # Watchdog mode: check if heartbeat is currently alive
     backoff = [0, 0, 0] if args.no_backoff else [2, 4, 6]
-    result = get_active_runs(args.workflow, current_run_id, repo, backoff_delays=backoff)
+    result = get_active_runs(
+        args.workflow, current_run_id, repo,
+        backoff_delays=backoff, allow_jitter=not args.no_backoff
+    )
 
     if result.is_failed:
         # FAIL-CLOSED: cannot confirm state, do NOT assume dead, do NOT restart
@@ -215,6 +315,13 @@ def cmd_watchdog_check(args: argparse.Namespace) -> int:
             watchdog_already_alive=False,
             watchdog_active_state_unknown=True,
         )
+        if result.error_type == "AUTH_ERROR":
+            return 1
+        if (getattr(args, "defer_transient", None) is True) and (
+            result.error_type in ("RATE_LIMIT", "SERVER_ERROR") or "rate limit" in (result.error or "").lower()
+        ):
+            print("[Pulse Guard] Transient error during watchdog check; safely deferring to next cron schedule.", file=sys.stderr)
+            return 0
         return 1
 
     if result.runs:
@@ -248,6 +355,20 @@ def cmd_watchdog_check(args: argparse.Namespace) -> int:
     set_github_output("watchdog_already_alive", "false")
     set_github_output("watchdog_active_state_unknown", "false")
     set_github_output("active_run_check", "OK")
+    log_pulse_status(
+        pulse_mode="watchdog",
+        current_run_id=current_run_id,
+        active_run_check="OK",
+        active_run_check_attempts=result.attempts,
+        active_run_check_error=None,
+        other_active_runs="0",
+        next_pulse_required=True,
+        trigger_attempt="NONE",
+        trigger_result="WATCHDOG_RESTART",
+        watchdog_restart=True,
+        watchdog_already_alive=False,
+        watchdog_active_state_unknown=False,
+    )
     return 0
 
 
@@ -269,7 +390,10 @@ def cmd_pulse_dispatch(args: argparse.Namespace) -> int:
     next_pulse_required = (pulse_mode in {"heartbeat", "watchdog"})
 
     if not next_pulse_required:
-        check_result = get_active_runs(args.workflow, current_run_id, repo, backoff_delays=backoff)
+        check_result = get_active_runs(
+            args.workflow, current_run_id, repo,
+            backoff_delays=backoff, allow_jitter=not args.no_backoff
+        )
         log_pulse_status(
             pulse_mode=pulse_mode,
             current_run_id=current_run_id,
@@ -290,15 +414,25 @@ def cmd_pulse_dispatch(args: argparse.Namespace) -> int:
         time.sleep(args.sleep_seconds)
 
     # Pre-dispatch anti-split brain check (Fail-Closed)
-    check_result = get_active_runs(args.workflow, current_run_id, repo, backoff_delays=backoff)
+    check_result = get_active_runs(
+        args.workflow, current_run_id, repo,
+        backoff_delays=backoff, allow_jitter=not args.no_backoff
+    )
 
     if check_result.is_failed:
         # FAIL-CLOSED: cannot confirm state, do NOT dispatch in the dark
+        err_msg = check_result.error or "Unknown active run query error"
+        err_type = check_result.error_type or classify_github_error(err_msg)[0]
+
         print(
-            f"[Pulse Guard] Error: Failed to check active runs ({check_result.error}). "
+            f"[Pulse Guard] Error: Failed to check active runs ({err_msg}). "
             "Fail-closed: skipping dispatch to avoid split-brain duplication. Watchdog will recover if needed.",
             file=sys.stderr,
         )
+
+        is_transient = err_type in ("RATE_LIMIT", "SERVER_ERROR") or "rate limit" in err_msg.lower()
+        can_defer = (getattr(args, "defer_transient", None) is True) and is_transient
+
         log_pulse_status(
             pulse_mode=pulse_mode,
             current_run_id=current_run_id,
@@ -308,11 +442,16 @@ def cmd_pulse_dispatch(args: argparse.Namespace) -> int:
             other_active_runs="UNKNOWN",
             next_pulse_required=True,
             trigger_attempt="NONE",
-            trigger_result="SKIPPED_ACTIVE_STATE_UNKNOWN",
+            trigger_result="DEFERRED_TO_WATCHDOG" if can_defer else "SKIPPED_ACTIVE_STATE_UNKNOWN",
             watchdog_restart=watchdog_restart,
             watchdog_already_alive=False,
             watchdog_active_state_unknown=True if is_watchdog else None,
         )
+
+        if can_defer:
+            set_github_output("dispatch_result", "DEFERRED_TO_WATCHDOG")
+            print("[Pulse Guard] Active run check transient failure deferred to 15-minute watchdog cron. Exiting clean.", file=sys.stderr)
+            return 0
         return 1
 
     if check_result.runs:
@@ -343,6 +482,9 @@ def cmd_pulse_dispatch(args: argparse.Namespace) -> int:
     if repo:
         dispatch_cmd.extend(["-R", repo])
 
+    last_dispatch_err = ""
+    last_err_type = "UNKNOWN"
+
     for attempt in range(1, max_attempts + 1):
         print(f"[Pulse Guard] Dispatching next pulse (attempt {attempt}/{max_attempts})...")
         res = subprocess.run(dispatch_cmd, capture_output=True, text=True, check=False)
@@ -361,16 +503,54 @@ def cmd_pulse_dispatch(args: argparse.Namespace) -> int:
                 watchdog_restart=watchdog_restart,
                 watchdog_already_alive=False,
             )
+            set_github_output("dispatch_result", "DISPATCHED")
             return 0
         else:
-            print(f"[Pulse Guard] Dispatch attempt {attempt} failed: {res.stderr.strip()}", file=sys.stderr)
+            last_dispatch_err = res.stderr.strip()
+            last_err_type, retry_after = classify_github_error(last_dispatch_err, res.returncode)
+            print(f"[Pulse Guard] Dispatch attempt {attempt} failed ({last_err_type}): {last_dispatch_err}", file=sys.stderr)
+
+            # Fatal auth error -> do not retry
+            if last_err_type == "AUTH_ERROR":
+                print(f"[Pulse Guard] Fatal authentication error during workflow dispatch: {last_dispatch_err}", file=sys.stderr)
+                log_pulse_status(
+                    pulse_mode=pulse_mode,
+                    current_run_id=current_run_id,
+                    active_run_check="OK",
+                    active_run_check_attempts=check_result.attempts,
+                    active_run_check_error=None,
+                    other_active_runs="0",
+                    next_pulse_required=True,
+                    trigger_attempt=str(attempt),
+                    trigger_result="FAILED_AUTHENTICATION",
+                    watchdog_restart=watchdog_restart,
+                    watchdog_already_alive=False,
+                )
+                set_github_output("dispatch_result", "FAILED_AUTHENTICATION")
+                return 1
+
+            # Rate limit with long wait -> do not hammer dispatch
+            if last_err_type == "RATE_LIMIT" and retry_after is not None and retry_after > 15:
+                print(f"[Pulse Guard] Dispatch rate limited. Reset in {retry_after}s. Halting dispatch retries.", file=sys.stderr)
+                break
+
             if attempt < max_attempts:
-                delay = dispatch_backoffs[attempt - 1]
-                print(f"[Pulse Guard] Backing off for {delay}s before retry...")
+                if retry_after is not None and 0 < retry_after <= 15:
+                    delay = float(retry_after)
+                else:
+                    delay = float(dispatch_backoffs[attempt - 1])
+                if not args.no_backoff and delay > 0:
+                    delay += random.uniform(0.5, 2.0)
+                print(f"[Pulse Guard] Backing off for {delay:.1f}s before retry...")
                 time.sleep(delay)
 
     # All dispatch attempts exhausted
-    print("[Pulse Guard] All 3 dispatch attempts failed!", file=sys.stderr)
+    is_transient = last_err_type in ("RATE_LIMIT", "SERVER_ERROR") or any(
+        k in last_dispatch_err.lower() for k in ["500", "502", "503", "rate limit", "too many requests"]
+    )
+    can_defer = (getattr(args, "defer_transient", None) is True) and is_transient
+
+    print(f"[Pulse Guard] All dispatch attempts failed (last error: {last_dispatch_err})", file=sys.stderr)
     log_pulse_status(
         pulse_mode=pulse_mode,
         current_run_id=current_run_id,
@@ -380,10 +560,17 @@ def cmd_pulse_dispatch(args: argparse.Namespace) -> int:
         other_active_runs="0",
         next_pulse_required=True,
         trigger_attempt=str(max_attempts),
-        trigger_result="FAILED",
+        trigger_result="DEFERRED_TO_WATCHDOG" if can_defer else "FAILED",
         watchdog_restart=watchdog_restart,
         watchdog_already_alive=False,
     )
+
+    if can_defer:
+        set_github_output("dispatch_result", "DEFERRED_TO_WATCHDOG")
+        print("[Pulse Guard] Dispatch failure deferred to 15-minute watchdog cron. Exiting clean.", file=sys.stderr)
+        return 0
+
+    set_github_output("dispatch_result", "FAILED")
     return 1
 
 
@@ -396,6 +583,7 @@ def main() -> int:
     parser.add_argument("--trigger-source", default=None, help="Trigger source override")
     parser.add_argument("--current-run-id", default=None, help="Current run ID override")
     parser.add_argument("--no-backoff", action="store_true", help="Disable retry backoff (for tests)")
+    parser.add_argument("--defer-transient", action="store_true", help="Defer transient 403/429/50x failures to 15-min watchdog cron instead of failing workflow")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 

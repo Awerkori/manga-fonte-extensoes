@@ -433,7 +433,7 @@ abstract class MangaLivre :
                     null
                 }
 
-                jsBridge(bridgeName) { payload ->
+                webMessageBridge(bridgeName) { payload ->
                     try {
                         val json = Json.parseToJsonElement(payload).jsonObject
                         val type = json["type"]?.jsonPrimitive?.content
@@ -444,7 +444,7 @@ abstract class MangaLivre :
                                 val pages = list.toPageList(mangaId, chapterNumber)
                                 if (pages.isNotEmpty()) {
                                     resolve(pages)
-                                    return@jsBridge
+                                    return@webMessageBridge
                                 }
                             }
                         }
@@ -635,7 +635,9 @@ abstract class MangaLivre :
 
             const postMessage = (msg) => {
                 try {
-                    if (window['$bridgeName'] && window['$bridgeName'].post) {
+                    if (window['$bridgeName'] && window['$bridgeName'].postMessage) {
+                        window['$bridgeName'].postMessage(JSON.stringify(msg));
+                    } else if (window['$bridgeName'] && window['$bridgeName'].post) {
                         window['$bridgeName'].post(JSON.stringify(msg));
                     }
                 } catch(e) {}
@@ -738,7 +740,9 @@ abstract class MangaLivre :
                 performance.getEntriesByType('resource').forEach((entry) => urls.add(entry.name));
             }
             try {
-                if (window['$bridgeName'] && window['$bridgeName'].post) {
+                if (window['$bridgeName'] && window['$bridgeName'].postMessage) {
+                    window['$bridgeName'].postMessage(JSON.stringify(Array.from(urls)));
+                } else if (window['$bridgeName'] && window['$bridgeName'].post) {
                     window['$bridgeName'].post(JSON.stringify(Array.from(urls)));
                 }
             } catch(e) {}
