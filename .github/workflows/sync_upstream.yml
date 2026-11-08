@@ -79,6 +79,16 @@ jobs:
           git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ${B64_AUTH}"
           echo "✅ Git configurado com SYNC_PAT para permitir acionamento de workflows downstream."
 
+          # Validação antecipada (pre-flight probe) de permissão de escrita
+          if ! git push --dry-run origin HEAD:main > /tmp/git_push_probe.log 2>&1; then
+            echo "::error title=Permissão de Escrita Insuficiente::FALHA PERMANENTE: SYNC_PAT não possui permissão de escrita/push no repositório."
+            cat /tmp/git_push_probe.log
+            rm -f /tmp/git_push_probe.log
+            exit 1
+          fi
+          rm -f /tmp/git_push_probe.log
+          echo "✅ Pré-validação de permissão de escrita (git push --dry-run) confirmada."
+
       - name: Watchdog guard & mode detection
         id: guard
         env:
