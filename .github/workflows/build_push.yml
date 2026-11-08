@@ -53,6 +53,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up Java
+        uses: actions/setup-java@a8a3c200dd8e0dd22359aa02ec3b6a94f6f0f723 # v5.0.0
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Pre-warm Gradle distribution cache
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+
+      - name: Download Gradle wrapper
+        run: ./gradlew --version
+
       - name: Get last successful CI commit
         if: ${{ !(inputs.base_sha) }}
         uses: nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1 # v5.0.1
@@ -75,6 +87,7 @@ jobs:
     timeout-minutes: 30
     if: needs.prepare.outputs.has_build_modules == 'true'
     strategy:
+      fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout main branch
