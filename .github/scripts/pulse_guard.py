@@ -487,7 +487,11 @@ def cmd_pulse_dispatch(args: argparse.Namespace) -> int:
 
     for attempt in range(1, max_attempts + 1):
         print(f"[Pulse Guard] Dispatching next pulse (attempt {attempt}/{max_attempts})...")
-        res = subprocess.run(dispatch_cmd, capture_output=True, text=True, check=False)
+        dispatch_env = os.environ.copy()
+        dispatch_token = os.environ.get("DISPATCH_TOKEN") or os.environ.get("SYNC_PAT")
+        if dispatch_token:
+            dispatch_env["GH_TOKEN"] = dispatch_token
+        res = subprocess.run(dispatch_cmd, capture_output=True, text=True, check=False, env=dispatch_env)
         if res.returncode == 0:
             print(f"[Pulse Guard] Successfully dispatched next pulse on attempt {attempt}.")
             log_pulse_status(

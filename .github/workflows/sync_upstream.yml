@@ -28,20 +28,61 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: write
+      actions: write
     env:
-      GH_TOKEN: ${{ secrets.SYNC_PAT }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout main branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.SYNC_PAT }}
-          persist-credentials: true
+          token: ${{ github.token }}
+          persist-credentials: false
+
+      - name: Validate authentication & configure git push
+        env:
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
+        run: |
+          echo "=================================================="
+          echo "PROJECT NOX — AUTHENTICATION & CREDENTIAL GUARD"
+          echo "=================================================="
+
+          if [ -z "$SYNC_PAT" ]; then
+            echo "::error title=Credencial Ausente::secrets.SYNC_PAT está ausente ou vazio."
+            echo "O Personal Access Token é obrigatório para publicar em origin/main e disparar o workflow de compilação."
+            exit 1
+          fi
+
+          AUTH_STATUS=$(curl -s -o /tmp/gh_auth_check.json -w "%{http_code}" \
+            -H "Authorization: Bearer $SYNC_PAT" \
+            -H "User-Agent: ProjectNox-SyncUpstream-AuthCheck" \
+            https://api.github.com/user)
+
+          if [ "$AUTH_STATUS" -eq 200 ]; then
+            USER_LOGIN=$(jq -r '.login // empty' /tmp/gh_auth_check.json)
+            echo "✅ Autenticação com SYNC_PAT verificada com sucesso (HTTP 200). Usuário: $USER_LOGIN"
+          elif [ "$AUTH_STATUS" -eq 401 ]; then
+            echo "::error title=Credencial Inválida::FALHA PERMANENTE: SYNC_PAT inválido ou expirado (HTTP 401: Bad credentials)."
+            echo "Por favor, atualize o secret SYNC_PAT no repositório."
+            rm -f /tmp/gh_auth_check.json
+            exit 1
+          elif [ "$AUTH_STATUS" -eq 403 ]; then
+            echo "::warning title=Restrição de Rate Limit::Verificação da API retornou HTTP 403. Prosseguindo com cautela..."
+          else
+            echo "::warning title=Aviso de API::Verificação da API retornou HTTP $AUTH_STATUS."
+          fi
+          rm -f /tmp/gh_auth_check.json
+
+          # Configura credenciais para push em origin com o PAT
+          B64_AUTH=$(echo -n "x-access-token:${SYNC_PAT}" | base64 -w 0)
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ${B64_AUTH}"
+          echo "✅ Git configurado com SYNC_PAT para permitir acionamento de workflows downstream."
 
       - name: Watchdog guard & mode detection
         id: guard
         env:
+          GH_TOKEN: ${{ github.token }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           TRIGGER_SOURCE: ${{ github.event.inputs.trigger_source || 'manual' }}
           CURRENT_RUN_ID: ${{ github.run_id }}
@@ -140,6 +181,8 @@ jobs:
       - name: Trigger next check (24/7 cloud pulse)
         if: always() && !cancelled() && steps.guard.conclusion == 'success' && steps.guard.outputs.should_run_sync == 'true' && steps.sync.conclusion == 'success'
         env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_TOKEN: ${{ secrets.SYNC_PAT }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           TRIGGER_SOURCE: ${{ github.event.inputs.trigger_source || 'manual' }}
           CURRENT_RUN_ID: ${{ github.run_id }}

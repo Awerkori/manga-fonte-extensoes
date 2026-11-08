@@ -310,6 +310,28 @@ class TestPulseGuard(unittest.TestCase):
         self.assertIn("NEXT_PULSE_TRIGGER_ATTEMPT=3", stdout)
         self.assertIn("NEXT_PULSE_TRIGGER_RESULT=FAILED", stdout)
 
+    @patch("subprocess.run")
+    @patch("pulse_guard.get_active_runs")
+    def test_pulse_dispatch_uses_dispatch_token(self, mock_active, mock_run):
+        os.environ["GITHUB_EVENT_NAME"] = "workflow_dispatch"
+        os.environ["TRIGGER_SOURCE"] = "heartbeat"
+        os.environ["GH_TOKEN"] = "actions_token"
+        os.environ["DISPATCH_TOKEN"] = "pat_dispatch_token"
+        mock_active.return_value = ActiveRunsResult(status="OK", runs=[], attempts=1, error=None)
+        mock_run.return_value = MagicMock(returncode=0)
+        args = MagicMock(
+            event_name=None, trigger_source=None, current_run_id="123", repo=None,
+            workflow="sync_upstream.yml", sleep_seconds=0, no_backoff=True, ref="main"
+        )
+
+        with patch("sys.stdout", new_callable=io.StringIO):
+            ret = pulse_guard.cmd_pulse_dispatch(args)
+
+        self.assertEqual(ret, 0)
+        mock_run.assert_called_once()
+        _, kwargs = mock_run.call_args
+        self.assertEqual(kwargs.get("env", {}).get("GH_TOKEN"), "pat_dispatch_token")
+
 
 if __name__ == "__main__":
     unittest.main()
