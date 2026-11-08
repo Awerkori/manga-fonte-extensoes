@@ -32,6 +32,7 @@ import java.util.concurrent.Executors
 
 @Source
 abstract class OsakaScan : ZeistManga() {
+    protected open val mangaCategory = "Series"
     private val combinedBlocks = ConcurrentHashMap<String, List<String>>()
     private val combinedCache = object : LinkedHashMap<String, ByteArray>(8, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>) = size > 8
