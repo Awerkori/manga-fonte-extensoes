@@ -833,7 +833,7 @@ class PublicationVersionTest(unittest.TestCase):
         upstream = self.version("1.6", 1)
         self.assertEqual((local.android_code, upstream.android_code), (104002, 106001))
         self.assertIsNone(self.compare(local, upstream))
-        with patch.object(sync_upstream, "effective_version_code", side_effect=[local, upstream]):
+        with patch.object(sync_upstream, "effective_version_code", side_effect=[local, upstream]), patch.object(sync_upstream, "is_nox_exclusive", return_value=False):
             self.assertEqual(sync_upstream.pending_sync_units([self.unit], [], "upstream"), [self.unit])
 
     def test_same_library_preserves_local_ahead(self):
