@@ -66,7 +66,13 @@ def parse_name_status(output: str) -> list[tuple[str, list[str]]]:
 def is_preserved(path: str) -> bool:
     if path == ".github" or path.startswith(".github/"):
         return True
-    if path.lower().startswith("readme"):
+    path_lower = path.lower()
+    if (
+        path_lower.startswith("readme")
+        or path_lower.startswith("contributing")
+        or path_lower.startswith("license")
+        or path_lower.startswith("notice")
+    ):
         return True
     if path in {
         "gradle/libs.versions.toml",

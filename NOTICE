@@ -1,0 +1,71 @@
+Project Nox · Extensões de Leitura de Mangá (Código-fonte)
+Copyright (C) 2015 Javier Tomás
+Copyright (C) Keiyoushi Contributors
+Copyright (C) Felipe GFA
+Copyright (C) 2026 Project Nox Contributors & Awerkori
+
+================================================================================
+1. ESTRUTURA DE LICENCIAMENTO HÍBRIDO E COMBINADO
+================================================================================
+Este repositório contém código derivado e contribuições originais:
+
+a) Código Upstream de Terceiros (Apache-2.0):
+   O código-fonte base das extensões, arquitetura central e parsers originários
+   dos projetos Keiyoushi e Tachiyomi é licenciado sob a Apache License,
+   Version 2.0. O texto integral da licença Apache 2.0 está preservado e
+   disponível no arquivo LICENSE-APACHE deste repositório.
+
+b) Contribuições Originais do Project Nox (AGPL-3.0-only):
+   Todas as modificações originais, novos parsers, correções, scripts de CI/CD
+   e extensões desenvolvidas exclusivamente pelo Project Nox são licenciadas
+   sob a GNU Affero General Public License versão 3.0 (AGPL-3.0-only).
+
+c) Distribuição do Trabalho Combinado (AGPL-3.0):
+   Conforme estabelecido pela Free Software Foundation, a licença Apache 2.0 é
+   unidirecionalmente compatível com a GNU AGPL versão 3.0. O trabalho combinado
+   resultante deste repositório é distribuído sob os termos da GNU AGPLv3,
+   mantendo-se plenamente preservados todos os avisos de copyright, atribuições e
+   condições da Apache 2.0 para os arquivos e componentes upstream.
+
+================================================================================
+2. SINCRONIZAÇÃO UPSTREAM E ESCOPO EXCLUSIVO DE DESENVOLVIMENTO
+================================================================================
+- Sincronização a jusante (downstream): As atualizações provenientes do repositório
+  upstream Keiyoushi (Apache-2.0) são incorporadas preservando sua licença original,
+  arquivos NOTICE e créditos associados através dos fluxos de sincronização.
+- Desenvolvimento Exclusivo no Project Nox: Todas as alterações, melhorias e
+  novos recursos são mantidos estritamente dentro dos repositórios sob a conta
+  Awerkori. Nenhum Pull Request é aberto, submetido ou preparado para os repositórios
+  upstream do Keiyoushi ou Tachiyomi, garantindo sincronização downstream estável
+  sem sobreposição de governança externa.
+
+================================================================================
+3. COMPONENTES E RECURSOS ESPECÍFICOS DE TERCEIROS
+================================================================================
+Este repositório inclui recursos incorporados adicionais com licenças específicas:
+- Fontes tipográficas em lib-multisrc/manhuarm/assets/fonts/:
+  - Anime Ace (LICENSE_ANIMEACE.txt)
+  - Comic Neue (LICENSE_COMIC_NEUE.txt — SIL Open Font License 1.1)
+  - Coming Soon (LICENSE_COMING_SOON.txt — Apache License 2.0)
+- Cronet Runtime em lib/cronetruntime/resources/chromium/LICENSE:
+  - Copyright (c) The Chromium Authors (BSD-style license)
+
+================================================================================
+4. CLÁUSULA DE INTERAÇÃO REMOTA DE REDE (AGPLv3 Seção 13)
+================================================================================
+Este repositório adota a GNU AGPL versão 3.0 (AGPL-3.0-only) para o trabalho
+combinado e contribuições originais. Em conformidade com a Seção 13 da AGPLv3,
+qualquer serviço ou aplicação que execute este código de forma modificada em
+servidores ou nuvem com interação remota de usuários através de rede deve fornecer
+a todos os usuários remotos a oportunidade de obter o Código-Fonte Correspondente
+(Corresponding Source), sem cobrança, via meio habitual de transmissão de software.
+
+================================================================================
+5. PROTEÇÃO DE IDENTIDADE E MARCA (AGPLv3 Seção 7(e))
+================================================================================
+A licença AGPL 3.0 e a licença Apache 2.0 aplicam-se estritamente aos direitos
+autorais de software. Os nomes "Project Nox" e "Awerkori", bem como créditos a
+"Felipe GFA" e "Keiyoushi", identificam os respectivos autores e origens. Em
+consonância com a Seção 7(e) da GNU AGPLv3 e a Seção 6 da Apache 2.0, NENHUM direito
+é concedido para o uso de nomes comerciais ou logotipos com a finalidade de sugerir
+endosso, afiliação ou homologação oficial sem consentimento prévio por escrito.
