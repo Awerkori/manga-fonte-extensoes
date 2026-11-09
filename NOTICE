@@ -15,30 +15,29 @@ a) Código Upstream de Terceiros (Apache-2.0):
    Version 2.0. O texto integral da licença Apache 2.0 está preservado e
    disponível no arquivo LICENSE-APACHE deste repositório.
 
-b) Contribuições Originais do Project Nox (GPL-3.0-only):
+b) Contribuições Originais do Project Nox (AGPL-3.0-only):
    Todas as modificações originais, novos parsers, correções, scripts de CI/CD
    e extensões desenvolvidas exclusivamente pelo Project Nox são licenciadas
-   sob a GNU General Public License versão 3.0 (GPL-3.0-only).
+   sob a GNU Affero General Public License versão 3.0 (AGPL-3.0-only).
 
-c) Distribuição do Trabalho Combinado (GPL-3.0):
-   Conforme estabelecido pela Free Software Foundation e pela Apache Software
-   Foundation, a licença Apache 2.0 é compatível com a GNU GPL versão 3.0.
-   O trabalho combinado resultante deste repositório é distribuído sob os
-   termos da GNU GPLv3, mantendo-se plenamente preservados todos os avisos de
-   copyright, atribuições e condições da Apache 2.0 para os arquivos upstream.
+c) Distribuição do Trabalho Combinado (AGPL-3.0):
+   Conforme estabelecido pela Free Software Foundation, a licença Apache 2.0 é
+   unidirecionalmente compatível com a GNU AGPL versão 3.0. O trabalho combinado
+   resultante deste repositório é distribuído sob os termos da GNU AGPLv3,
+   mantendo-se plenamente preservados todos os avisos de copyright, atribuições e
+   condições da Apache 2.0 para os arquivos e componentes upstream.
 
 ================================================================================
-2. SINCRONIZAÇÃO UPSTREAM E DIRETRIZES DE CONTRIBUIÇÃO
+2. SINCRONIZAÇÃO UPSTREAM E ESCOPO EXCLUSIVO DE DESENVOLVIMENTO
 ================================================================================
 - Sincronização a jusante (downstream): As atualizações provenientes do repositório
-  upstream Keiyoushi (Apache-2.0) são incorporadas preservando sua licença
-  original e créditos associados.
-- Contribuições a montante (upstream): Desenvolvedores que pretendam submeter
-  melhorias ou extensões deste repositório diretamente aos repositórios upstream
-  (Keiyoushi / Tachiyomi) devem conceder sua contribuição sob a licença Apache
-  2.0 ou em regime de duplo licenciamento (Apache-2.0 e GPL-3.0-only), haja vista
-  que projetos estritamente Apache 2.0 não podem incorporar código licenciado
-  exclusivamente sob GPLv3.
+  upstream Keiyoushi (Apache-2.0) são incorporadas preservando sua licença original,
+  arquivos NOTICE e créditos associados através dos fluxos de sincronização.
+- Desenvolvimento Exclusivo no Project Nox: Todas as alterações, melhorias e
+  novos recursos são mantidos estritamente dentro dos repositórios sob a conta
+  Awerkori. Nenhum Pull Request é aberto, submetido ou preparado para os repositórios
+  upstream do Keiyoushi ou Tachiyomi, garantindo sincronização downstream estável
+  sem sobreposição de governança externa.
 
 ================================================================================
 3. COMPONENTES E RECURSOS ESPECÍFICOS DE TERCEIROS
@@ -52,16 +51,21 @@ Este repositório inclui recursos incorporados adicionais com licenças específ
   - Copyright (c) The Chromium Authors (BSD-style license)
 
 ================================================================================
-4. ESCLARECIMENTO SOBRE LICENCIAMENTO (GPL-3.0 vs. AGPL-3.0)
+4. CLÁUSULA DE INTERAÇÃO REMOTA DE REDE (AGPLv3 Seção 13)
 ================================================================================
-Fica expressamente consignado que este repositório adota a GNU GPL versão 3.0
-(GPL-3.0-only). A GNU GPLv3 não contém a cláusula de interação remota de rede
-(Seção 13 da AGPLv3).
+Este repositório adota a GNU AGPL versão 3.0 (AGPL-3.0-only) para o trabalho
+combinado e contribuições originais. Em conformidade com a Seção 13 da AGPLv3,
+qualquer serviço ou aplicação que execute este código de forma modificada em
+servidores ou nuvem com interação remota de usuários através de rede deve fornecer
+a todos os usuários remotos a oportunidade de obter o Código-Fonte Correspondente
+(Corresponding Source), sem cobrança, via meio habitual de transmissão de software.
 
 ================================================================================
-5. RESERVA DE MARCA E IDENTIDADE VISUAL
+5. PROTEÇÃO DE IDENTIDADE E MARCA (AGPLv3 Seção 7(e))
 ================================================================================
-A licença GPL 3.0 e a licença Apache 2.0 aplicam-se estritamente aos direitos
-autorais de software. NENHUM direito de uso das marcas registradas, nomes
-comerciais ou logotipos oficiais do "Project Nox", de "Awerkori", de "Felipe GFA"
-ou de "Keiyoushi" é concedido.
+A licença AGPL 3.0 e a licença Apache 2.0 aplicam-se estritamente aos direitos
+autorais de software. Os nomes "Project Nox" e "Awerkori", bem como créditos a
+"Felipe GFA" e "Keiyoushi", identificam os respectivos autores e origens. Em
+consonância com a Seção 7(e) da GNU AGPLv3 e a Seção 6 da Apache 2.0, NENHUM direito
+é concedido para o uso de nomes comerciais ou logotipos com a finalidade de sugerir
+endosso, afiliação ou homologação oficial sem consentimento prévio por escrito.

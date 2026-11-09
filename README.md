@@ -117,11 +117,11 @@ O **Project Nox** expressa seu reconhecimento e agradecimento a todos que tornar
 
 ## ⚖️ Licença e Governança
 
-O trabalho combinado deste repositório é distribuído sob os termos da **GNU General Public License versão 3.0** (`GPL-3.0-only`), respeitando a compatibilidade e preservando integralmente os direitos dos autores originais:
+O trabalho combinado deste repositório é distribuído sob os termos da **GNU Affero General Public License versão 3.0** (`AGPL-3.0-only`), respeitando a compatibilidade e preservando integralmente os direitos dos autores originais:
 
 - **Código Upstream (Keiyoushi / Tachiyomi):** Licenciado sob a [Apache License 2.0](LICENSE-APACHE). Todos os avisos de direitos autorais originais foram integralmente mantidos.
-- **Contribuições Originais do Project Nox:** Licenciadas sob a [GNU GPL v3.0](LICENSE) (`GPL-3.0-only`).
-- **Trabalho Combinado:** Distribuído sob a **GNU GPL v3.0** em virtude da compatibilidade unidirecional Apache 2.0 → GPLv3.
+- **Contribuições Originais do Project Nox:** Licenciadas sob a [GNU AGPL v3.0](LICENSE) (`AGPL-3.0-only`).
+- **Trabalho Combinado:** Distribuído sob a **GNU AGPL v3.0** em virtude da compatibilidade unidirecional Apache 2.0 → AGPLv3.
 
 Consulte o arquivo [NOTICE](NOTICE) para o inventário completo de atribuições, componentes incorporados e diretrizes jurídicas.
 
@@ -131,19 +131,19 @@ Copyright (c) Keiyoushi Contributors
 Copyright (c) Felipe GFA
 Copyright (C) 2026 Project Nox Contributors & Awerkori
 
-Licensed under the GNU General Public License, Version 3.0 (for Project Nox contributions
+Licensed under the GNU Affero General Public License, Version 3.0 (for Project Nox contributions
 and combined work) and the Apache License, Version 2.0 (for upstream Keiyoushi components).
 ```
 
-### 🔄 Sincronização Upstream e Contribuições
+### 🔄 Sincronização Upstream e Governança
 - O Project Nox sincroniza periodicamente atualizações do ecossistema Keiyoushi mantendo os créditos e licenças Apache 2.0 originais intactos.
-- Caso desenvolvedores desejem enviar PRs e contribuições deste repositório para o upstream oficial do Keiyoushi, tais contribuições devem ser disponibilizadas sob a licença **Apache 2.0** ou em **duplo licenciamento** (Apache 2.0 + GPL 3.0), visto que projetos estritamente Apache 2.0 não podem incorporar código exclusivamente GPLv3.
+- Todo o ciclo de vida, melhorias e extensões específicas do Project Nox são mantidos exclusivamente dentro da organização `Awerkori`. Nenhum Pull Request é aberto ou enviado para os repositórios upstream do Keiyoushi, assegurando preservação da autonomia do projeto e estabilidade da sincronização a jusante.
 
-### 📌 Nota sobre GPL-3.0 e AGPL-3.0
-O Project Nox adota oficialmente a licença **GNU GPL versão 3.0**. Diferentemente da licença GNU AGPLv3, a GPLv3 não contém a cláusula de interação remota por rede (Seção 13 da AGPL).
+### 📌 Interação Remota de Rede (GNU AGPLv3 Seção 13)
+O Project Nox adota oficialmente a licença **GNU AGPL versão 3.0**. Nos termos da Seção 13 da AGPLv3, qualquer versão modificada deste software operada em servidores ou instâncias acessíveis remotamente através de uma rede de computadores deve oferecer a todos os usuários remotos a oportunidade de obter o Código-Fonte Correspondente (Corresponding Source) da versão em execução, sem custos e através de meio padrão de disponibilização de software em rede.
 
-### 🛡️ Autenticidade e Marca
-A concessão das licenças de software livre refere-se estritamente ao código. Ela **não concede** autorização ou licença de uso da marca, do nome "Project Nox" ou de logotipos oficiais para alegar endosso ou representação oficial do projeto.
+### 🛡️ Proteção de Identidade e Marca (AGPLv3 Seção 7(e))
+A concessão das licenças de software livre refere-se estritamente ao código. Ela **não concede** autorização ou licença de uso de marcas, nomes ou logotipos oficiais do "Project Nox", de "Awerkori" ou de terceiros para insinuar endosso, homologação ou representação oficial do projeto sem consentimento prévio por escrito.
 
 ### ⚖️ Isenção de Responsabilidade
 O **Project Nox** desenvolve exclusivamente ferramentas de software livre para interoperabilidade técnica e pesquisa de agregação programática. O projeto não hospeda, gerencia nem armazena conteúdos protegidos por direitos autorais em seus repositórios de código. As extensões realizam apenas requisições diretas a fontes públicas da web.
