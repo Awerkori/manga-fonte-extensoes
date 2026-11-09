@@ -117,11 +117,12 @@ O **Project Nox** expressa seu reconhecimento e agradecimento a todos que tornar
 
 ## ⚖️ Licença e Copyright
 
-O trabalho combinado deste repositório é distribuído sob os termos da **GNU Affero General Public License versão 3.0** (`AGPL-3.0-only`), respeitando a compatibilidade e preservando integralmente os direitos dos autores originais:
+O trabalho combinado deste repositório é disponibilizado sob os termos da **GNU Affero General Public License versão 3.0** (`AGPL-3.0-only`), respeitando a compatibilidade e preservando integralmente os direitos dos autores originais:
 
 - **Código Upstream (Keiyoushi / Tachiyomi):** Licenciado sob a [Apache License 2.0](LICENSE-APACHE). Todos os avisos de direitos autorais originais foram integralmente mantidos.
 - **Contribuições Originais do Project Nox:** Licenciadas sob a [GNU AGPL v3.0](LICENSE) (`AGPL-3.0-only`).
 - **Trabalho Combinado:** Distribuído sob a **GNU AGPL v3.0** em virtude da compatibilidade unidirecional Apache 2.0 → AGPLv3.
+- **Preservação de Titularidade e Atribuição:** A inclusão de código upstream em trabalho combinado compatível não transfere a titularidade ao Project Nox nem revoga as obrigações de atribuição da Apache 2.0. O Project Nox não declara nem reivindica direitos exclusivos sobre código criado por terceiros, respeitando os componentes e licenças de cada módulo.
 
 Consulte o arquivo [NOTICE](NOTICE) para o inventário completo de atribuições, componentes incorporados e diretrizes jurídicas.
 
@@ -140,7 +141,7 @@ and combined work) and the Apache License, Version 2.0 (for upstream Keiyoushi c
 - Todo o ciclo de vida, melhorias e extensões específicas do Project Nox são mantidos exclusivamente dentro da organização `Awerkori`. Nenhum Pull Request é aberto ou enviado para os repositórios upstream do Keiyoushi, assegurando preservação da autonomia do projeto e estabilidade da sincronização a jusante.
 
 ### 📌 Interação Remota de Rede (GNU AGPLv3 Seção 13)
-O Project Nox adota oficialmente a licença **GNU AGPL versão 3.0**. Nos termos da Seção 13 da AGPLv3, qualquer versão modificada deste software operada em servidores ou instâncias acessíveis remotamente através de uma rede de computadores deve oferecer a todos os usuários remotos a oportunidade de obter o Código-Fonte Correspondente (Corresponding Source) da versão em execução, sem custos e através de meio padrão de disponibilização de software em rede.
+O Project Nox adota oficialmente a licença **GNU AGPL versão 3.0**. Em estrita conformidade com a Seção 13 da AGPLv3, caso uma versão modificada deste software seja operada em servidores ou instâncias acessíveis através de uma rede de computadores com interação remota de usuários, o operador deve oferecer a todos esses usuários remotos a oportunidade de obter o Código-Fonte Correspondente (Corresponding Source) da versão modificada em execução, sem custos e através de meio habitual de disponibilização de software em rede.
 
 ### 🛡️ Proteção de Identidade e Marca (AGPLv3 Seção 7(e))
 A concessão das licenças de software livre refere-se estritamente ao código. Ela **não concede** autorização ou licença de uso de marcas, nomes ou logotipos oficiais do "Project Nox", de "Awerkori" ou de terceiros para insinuar endosso, homologação ou representação oficial do projeto sem consentimento prévio por escrito.

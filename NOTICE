@@ -27,6 +27,15 @@ c) Distribuição do Trabalho Combinado (AGPL-3.0):
    mantendo-se plenamente preservados todos os avisos de copyright, atribuições e
    condições da Apache 2.0 para os arquivos e componentes upstream.
 
+d) Preservação de Direitos, Atribuição e Ausência de Reivindicação Exclusiva:
+   A inclusão de código upstream em trabalho combinado compatível não revoga as
+   obrigações de atribuição estabelecidas pela Apache License 2.0 e não transfere
+   a titularidade dos direitos autorais de terceiros ao Project Nox. O Project Nox
+   não declara nem reivindica quaisquer direitos exclusivos sobre código
+   originalmente concebido por terceiros. O regime aplicável a cada extensão e
+   pacote compilado respeita os componentes efetivamente incorporados e os termos
+   das licenças correspondentes.
+
 ================================================================================
 2. SINCRONIZAÇÃO UPSTREAM E ESCOPO EXCLUSIVO DE DESENVOLVIMENTO
 ================================================================================
@@ -54,11 +63,12 @@ Este repositório inclui recursos incorporados adicionais com licenças específ
 4. CLÁUSULA DE INTERAÇÃO REMOTA DE REDE (AGPLv3 Seção 13)
 ================================================================================
 Este repositório adota a GNU AGPL versão 3.0 (AGPL-3.0-only) para o trabalho
-combinado e contribuições originais. Em conformidade com a Seção 13 da AGPLv3,
-qualquer serviço ou aplicação que execute este código de forma modificada em
-servidores ou nuvem com interação remota de usuários através de rede deve fornecer
-a todos os usuários remotos a oportunidade de obter o Código-Fonte Correspondente
-(Corresponding Source), sem cobrança, via meio habitual de transmissão de software.
+combinado e contribuições originais. Em estrita conformidade com a Seção 13 da
+AGPLv3, caso uma versão modificada deste software seja operada em servidores ou
+instâncias de rede acessíveis remotamente com interação de usuários, o operador
+deve oferecer a todos os usuários remotos a oportunidade de obter o Código-Fonte
+Correspondente (Corresponding Source) da versão modificada, sem cobrança, via
+meio habitual de disponibilização de software em rede.
 
 ================================================================================
 5. PROTEÇÃO DE IDENTIDADE E MARCA (AGPLv3 Seção 7(e))
