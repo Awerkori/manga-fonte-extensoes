@@ -915,7 +915,7 @@ val html = runWebView<String> {
 
 - `runWebView(timeout, configure)` suspends until `resolve`/`reject` is called inside `configure`, or `timeout` (default 30s) elapses; it always runs on the main thread internally.
 - The `WebViewScope` DSL exposes:
-  - **Settings:** `javaScriptEnabled`, `domStorageEnabled`, `blockImages`, `useWideViewPort`, `loadWithOverviewMode`, `userAgent` (spoofs matching `Sec-CH-UA` client hints on Chromium 119+), and `setOriginMatchedHeader(name, value, allowedOriginRules)` (Chromium 142+; sets a header on every request to the matching origins in place of WebView's own value; it is set on the WebView's profile, so it stays for every WebView of the app until the app is closed). Audio is always muted automatically across all `runWebView` instances (Chromium 122+).
+  - **Settings:** `javaScriptEnabled`, `domStorageEnabled`, `blockImages`, `useWideViewPort`, `loadWithOverviewMode`, `userAgent` (spoofs matching `Sec-CH-UA` client hints on Chromium 119+), and `setOriginMatchedHeader(name, value, allowedOriginRules)` (Chromium 142+, rejects the run if unsupported, so check `originMatchedHeaderSupported` first where the run can go on without it; sets a header on every request to the matching origins in place of WebView's own value; it is set on the WebView's profile, so it stays for every WebView of the app until the app is closed). Audio is always muted automatically across all `runWebView` instances (Chromium 122+).
   - **Navigation hooks:** `onPageStarted`, `onPageFinished`, `onReceivedError`.
   - **Request interception:** `interceptRequest` to inspect/replace/block resource loads (runs on a background thread). `proxyRequest(request, client) { ... }` sends a GET through a KeiSource client instead and hands the response to the WebView: the headers WebView passes, after the optional edit block, plus the browser headers of its `User-Agent`. WebView's own `X-Requested-With` is added after interception, so it isn't sent. It returns null for what it leaves to the WebView (other methods, subframes, stylesheets, fonts).
   - **Pre-DOM JavaScript Injection** (like the bridges below, call these before `loadUrl`/`loadData`; they only apply to later navigations):
@@ -1141,9 +1141,11 @@ val entry = directory.entries.first { it.name == "001.jpg" }
 val imageBytes = client.readZipEntry(zipUrl, entry).buffer().readByteArray()
 ```
 
-Both are suspend `OkHttpClient` extensions that take the source's own `headers` unless you pass some. `client.zipDirectory` gets the archive size from `Content-Range` and handles ZIP64; `client.readZipEntry` streams and decompresses only that one entry. Use them instead of downloading the full ZIP into a `ZipInputStream`, which forces the entire archive into memory.
+Both are suspend `OkHttpClient` extensions that take the source's own `headers` unless you pass some. `client.zipDirectory` gets the archive size from `Content-Range` and handles ZIP64; both need a server that honours the Range header and throw an `IOException` otherwise; `client.readZipEntry` streams and decompresses only that one entry. Use them instead of downloading the full ZIP into a `ZipInputStream`, which forces the entire archive into memory.
 
-To serve entries as pages from an image interceptor, which can't suspend, put the entry's fields in the page URL and read it with the blocking building blocks: `chain.proceed(request.newBuilder().range(entry.dataRange).build())`, then `readEntry(response.body.source(), entry.compressedSize, entry.method)`.
+Entry names are read as UTF-8 unless the archive stores them in a local charset without flagging them, as Japanese archivers often do with Shift-JIS. Pass that charset for those: `client.zipDirectory(zipUrl, charset = Charset.forName("MS932"))`. Names the archive flags as UTF-8, or that carry a matching Info-ZIP Unicode Path field, are still read as UTF-8.
+
+To serve entries as pages from an image interceptor, which can't suspend, put the entry's fields in the page URL (`localHeaderAllowance` too, for long names) and read it with the blocking building blocks: `chain.proceed(request.newBuilder().range(dataRange(offset, compressedSize, localHeaderAllowance)).build())`, then `readEntry(response.rangeSource(), compressedSize, method)`; `rangeSource()` throws an `IOException` when the server ignored the Range header. Malformed or encrypted entries throw `ZipException`, an `IOException`, so they fail the image load like any network error.
 
 ##### Jsoup helpers - `asJsoup` / `attrOrNull` / `textOrNull`
 
