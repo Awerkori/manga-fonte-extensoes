@@ -9,7 +9,14 @@
         "src/pt/mangasbrasuka",
         "src/pt/mugiwarasoficial"
       ],
-      "upstream_ref": "d9420cd1c66ecd3385946b616aacfcf8f6314f70"
+      "upstream_ref": "a260f4ba206834d66615c25fc3ac200c0c6d4889"
+    },
+    "dm5": {
+      "units": [
+        "src/zh/dm5",
+        "src/zh/jisumanhua"
+      ],
+      "upstream_ref": "upstream/main"
     }
   }
 }

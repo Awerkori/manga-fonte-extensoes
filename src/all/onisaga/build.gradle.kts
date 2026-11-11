@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "OniSaga"
-    versionCode = 6
+    versionCode = 7
     contentWarning = ContentWarning.MIXED
     libVersion = "1.6"
 
@@ -19,7 +19,9 @@ keiyoushi {
 
     deeplink {
         host("onisaga.com")
-        path("/manga/..*")
+        host("www.onisaga.com")
+        path("/title/..*")
         path("/read/..*")
+        path("/manga/..*")
     }
 }
