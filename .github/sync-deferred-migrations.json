@@ -9,7 +9,14 @@
         "src/pt/mangasbrasuka",
         "src/pt/mugiwarasoficial"
       ],
-      "upstream_ref": "436be707b5a6646f346e99fd2143fde2777b58a1"
+      "upstream_ref": "c3bc55d548b0a5f1b316a323bde9e6e2516e4bea"
+    },
+    "catharsis": {
+      "units": [
+        "src/es/aedex",
+        "src/es/catharsisworld"
+      ],
+      "upstream_ref": "upstream/main"
     },
     "dm5": {
       "units": [
