@@ -9,7 +9,7 @@
         "src/pt/mangasbrasuka",
         "src/pt/mugiwarasoficial"
       ],
-      "upstream_ref": "9080fbfd1d02ce2cad0f7466996fa19816f39401"
+      "upstream_ref": "f1bd88dacd89dfe644369c397efedf79965bf4c0"
     },
     "catharsis": {
       "units": [
@@ -22,6 +22,14 @@
       "units": [
         "src/zh/dm5",
         "src/zh/jisumanhua"
+      ],
+      "upstream_ref": "upstream/main"
+    },
+    "madara": {
+      "units": [
+        "src/all/fastestmanga",
+        "src/all/nhentaiyaoi",
+        "src/pt/yaoifanclub"
       ],
       "upstream_ref": "upstream/main"
     }
