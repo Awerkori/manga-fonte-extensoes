@@ -24,15 +24,6 @@
         "src/zh/jisumanhua"
       ],
       "upstream_ref": "upstream/main"
-    },
-    "koi": {
-      "units": [
-        "src/vi/medamtruyen",
-        "src/vi/soaicacomic",
-        "src/vi/teamlanhlung",
-        "src/vi/tusachxinhxinh"
-      ],
-      "upstream_ref": "upstream/main"
     }
   }
 }

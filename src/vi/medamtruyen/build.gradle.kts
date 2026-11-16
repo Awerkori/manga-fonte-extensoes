@@ -10,6 +10,8 @@ keiyoushi {
     contentWarning = ContentWarning.MIXED
     libVersion = "1.6"
 
+    theme = "koi"
+
     source {
         lang = "vi"
         baseUrl {
