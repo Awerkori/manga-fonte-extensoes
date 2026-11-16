@@ -9,7 +9,7 @@
         "src/pt/mangasbrasuka",
         "src/pt/mugiwarasoficial"
       ],
-      "upstream_ref": "d58b615d2e46e95fb8db6cc7a930d51dbcc43c25"
+      "upstream_ref": "9080fbfd1d02ce2cad0f7466996fa19816f39401"
     },
     "catharsis": {
       "units": [
@@ -22,6 +22,15 @@
       "units": [
         "src/zh/dm5",
         "src/zh/jisumanhua"
+      ],
+      "upstream_ref": "upstream/main"
+    },
+    "koi": {
+      "units": [
+        "src/vi/medamtruyen",
+        "src/vi/soaicacomic",
+        "src/vi/teamlanhlung",
+        "src/vi/tusachxinhxinh"
       ],
       "upstream_ref": "upstream/main"
     }
