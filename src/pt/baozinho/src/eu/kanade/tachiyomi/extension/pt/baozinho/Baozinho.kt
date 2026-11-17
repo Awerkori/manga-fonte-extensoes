@@ -14,6 +14,7 @@ import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
 import keiyoushi.utils.asJsoup
 import keiyoushi.utils.extractNextJs
+import keiyoushi.utils.getTurnstileToken
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.string
 import keiyoushi.utils.toJsonRequestBody
@@ -23,6 +24,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.jsoup.nodes.Document
+import java.io.IOException
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -113,16 +115,15 @@ abstract class Baozinho : KeiSource() {
     private fun parseChapters(document: Document, slug: String): List<SChapter> = document.extractNextJs<List<ChapterDto>>().orEmpty().map { it.toSChapter(slug) }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val request = SessionRequest(chapter.memo["capId"]!!.string.toLong())
-        val session = client.post("$API_URL/leitor/sessao", Fetch.XHR, request.toJsonRequestBody())
-            .parseAs<SessionDto>()
+        val capId = chapter.memo["capId"]!!.string.toLong()
+        val chapterUrl = getChapterUrl(chapter)
+        val session = openSession(capId, chapterUrl)
 
         val pages = session.paginas.toMutableList()
         var next = session.proximo
         while (next < session.total) {
             delay(session.intervaloMs.milliseconds)
-            val batch = client.get("$API_URL/leitor/sessao/${session.sid}/lote?de=$next", Fetch.XHR)
-                .parseAs<SessionDto>()
+            val batch = fetchBatch(session.sid, next, chapterUrl)
             if (batch.paginas.isEmpty()) break
             pages += batch.paginas
             next = batch.proximo
@@ -135,7 +136,38 @@ abstract class Baozinho : KeiSource() {
         }
     }
 
+    private suspend fun openSession(capId: Long, chapterUrl: String): SessionDto {
+        val url = "$API_URL/leitor/sessao"
+        val initial = client.post(url, Fetch.XHR, SessionRequest(capId).toJsonRequestBody(), ensureSuccess = false)
+        if (initial.isSuccessful) return initial.parseAs()
+        if (!initial.isTurnstileChallenge()) {
+            val code = initial.code
+            initial.close()
+            throw IOException("HTTP error $code")
+        }
+        val token = getTurnstileToken(chapterUrl, TURNSTILE_SITE_KEY)
+        return client.post(url, Fetch.XHR, SessionRequest(capId, turnstileToken = token).toJsonRequestBody())
+            .parseAs()
+    }
+
+    private suspend fun fetchBatch(sid: String, from: Int, chapterUrl: String): SessionDto {
+        val url = "$API_URL/leitor/sessao/$sid/lote?de=$from"
+        val initial = client.get(url, Fetch.XHR, ensureSuccess = false)
+        if (initial.isSuccessful) return initial.parseAs()
+        if (!initial.isTurnstileChallenge()) {
+            val code = initial.code
+            initial.close()
+            throw IOException("HTTP error $code")
+        }
+        val token = getTurnstileToken(chapterUrl, TURNSTILE_SITE_KEY)
+        val batchHeaders = headers.newBuilder().set("X-Turnstile", token).build()
+        return client.get(url, batchHeaders, Fetch.XHR).parseAs()
+    }
+
+    private fun Response.isTurnstileChallenge(): Boolean = code == 403 && runCatching { parseAs<ChallengeDto>().desafio == "turnstile" }.getOrDefault(false)
+
     companion object {
         private const val API_URL = "https://api.baozinho.com"
+        private const val TURNSTILE_SITE_KEY = "0x4AAAAAADtmuUfMFzDWFmF8"
     }
 }
