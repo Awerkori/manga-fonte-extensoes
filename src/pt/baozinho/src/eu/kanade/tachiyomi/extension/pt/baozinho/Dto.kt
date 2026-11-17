@@ -13,6 +13,8 @@ class ChapterDto(
     private val nome: String,
     private val numero: Float,
     private val lancadoEm: String,
+    private val gratuito: Boolean = true,
+    private val precoEmBaos: Int = 0,
 ) {
     fun toSChapter(slug: String) = SChapter.create().apply {
         name = this@ChapterDto.nome
@@ -22,6 +24,8 @@ class ChapterDto(
         memo = buildJsonObject {
             put("slug", slug)
             put("capId", id)
+            put("gratuito", gratuito)
+            put("precoEmBaos", precoEmBaos)
         }
     }
 }
@@ -41,8 +45,27 @@ class SessionRequest(
 )
 
 @Serializable
-class ChallengeDto(
+class ApiErrorDto(
     val desafio: String? = null,
+    val message: String? = null,
+)
+
+@Serializable
+class LoginRequest(
+    private val email: String,
+    private val senha: String,
+    private val turnstileToken: String,
+)
+
+@Serializable
+class RefreshRequest(
+    private val refreshToken: String,
+)
+
+@Serializable
+class AuthResponseDto(
+    val accessToken: String,
+    val refreshToken: String,
 )
 
 @Serializable
