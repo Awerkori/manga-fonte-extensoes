@@ -13,15 +13,22 @@ class ChapterDto(
     private val nome: String,
     private val numero: Float,
     private val lancadoEm: String,
+    private val gratuito: Boolean = true,
+    private val precoEmBaos: Int = 0,
 ) {
     fun toSChapter(slug: String) = SChapter.create().apply {
         name = this@ChapterDto.nome
         chapter_number = numero
         date_upload = Instant.tryParse(lancadoEm)
         url = "capitulo-${numero.toString().removeSuffix(".0")}"
+        if (!gratuito) {
+            scanlator = if (precoEmBaos > 0) "🔒 $precoEmBaos baos" else "🔒 VIP"
+        }
         memo = buildJsonObject {
             put("slug", slug)
             put("capId", id)
+            put("gratuito", gratuito)
+            put("precoEmBaos", precoEmBaos)
         }
     }
 }
@@ -41,8 +48,40 @@ class SessionRequest(
 )
 
 @Serializable
-class ChallengeDto(
+class ApiErrorDto(
     val desafio: String? = null,
+    val message: String? = null,
+)
+
+@Serializable
+class LoginRequest(
+    private val email: String,
+    private val senha: String,
+    private val turnstileToken: String,
+)
+
+@Serializable
+class RefreshRequest(
+    private val refreshToken: String,
+)
+
+@Serializable
+class AuthResponseDto(
+    val accessToken: String,
+    val refreshToken: String,
+)
+
+@Serializable
+class DailyTicketRequest(
+    private val capId: Long,
+)
+
+@Serializable
+class TagDto(
+    private val id: Int,
+    val nome: String,
+    val slug: String,
+    private val obrasCount: Int = 0,
 )
 
 @Serializable
