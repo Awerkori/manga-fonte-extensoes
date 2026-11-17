@@ -297,8 +297,13 @@ jobs:
             CATALOG_COMMIT=$(git rev-parse HEAD)
             echo "CATALOG_CHANGED=true"
             echo "CATALOG_COMMIT=$CATALOG_COMMIT"
-            curl https://purge.jsdelivr.net/gh/Awerkori/manga-extensoes@repo/index.json
-            curl https://purge.jsdelivr.net/gh/Awerkori/manga-extensoes@repo/index.pb
+            for catalog in index.pb index.json index.min.json; do
+              response=$(curl --fail --silent --show-error "https://purge.jsdelivr.net/gh/Awerkori/manga-extensoes@repo/${catalog}")
+              printf '%s\n' "$response" | jq -e --arg path "/gh/Awerkori/manga-extensoes@repo/${catalog}" '.status == "finished" and .paths[$path].throttled == false and .paths[$path].providers.CF == true and .paths[$path].providers.FY == true' >/dev/null || {
+                echo "CDN purge failed or was throttled for ${catalog}" >&2
+                exit 1
+              }
+            done
           else
             echo "CATALOG_CHANGED=false"
             echo "CATALOG_COMMIT=NONE"
