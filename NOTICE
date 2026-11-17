@@ -43,8 +43,8 @@ d) Preservação de Direitos, Atribuição e Ausência de Reivindicação Exclus
   upstream Keiyoushi (Apache-2.0) são incorporadas preservando sua licença original,
   arquivos NOTICE e créditos associados através dos fluxos de sincronização.
 - Desenvolvimento Exclusivo no Project Nox: Todas as alterações, melhorias e
-  novos recursos são mantidos estritamente dentro dos repositórios sob a conta
-  Awerkori. Nenhum Pull Request é aberto, submetido ou preparado para os repositórios
+  novos recursos são mantidos estritamente dentro dos repositórios sob a organização
+  ProjectNox-org. Nenhum Pull Request é aberto, submetido ou preparado para os repositórios
   upstream do Keiyoushi ou Tachiyomi, garantindo sincronização downstream estável
   sem sobreposição de governança externa.
 

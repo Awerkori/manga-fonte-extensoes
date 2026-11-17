@@ -7,7 +7,7 @@ Repositório central de desenvolvimento, código-fonte em Kotlin e automação d
 > [!IMPORTANT]
 > **Procurando apenas instalar as extensões no seu aplicativo?**  
 > Este repositório destina-se a desenvolvedores e contém o código-fonte em Kotlin para desenvolvimento e manutenção. Para instalar ou atualizar os catálogos prontos no seu leitor, utilize o repositório de distribuição oficial:  
-> ➡️ [**Project Nox · Extensões de Mangá (Distribuição)**](https://github.com/Awerkori/manga-extensoes)
+> ➡️ [**Project Nox · Extensões de Mangá (Distribuição)**](https://github.com/ProjectNox-org/manga-extensoes)
 
 ---
 
@@ -18,7 +18,7 @@ O ecossistema de mangás do **Project Nox** mantém fontes ativas e atualizadas 
 - **Desenvolvimento e Manutenção Contínua:** Implementação de parsers em Kotlin baseados na API de extensões para **Mihon e forks**, contornando proteções anti-bot, atualizando seletores CSS/JSON e garantindo estabilidade no carregamento de capítulos.
 - **Pipeline de Integração Contínua (CI):** Compilação automatizada via Gradle e GitHub Actions, com validação de tipos, testes sintéticos de catalogação e empacotamento em APKs assinados.
 - **Sincronização Upstream com Guardião de Fontes:** Mecanismo autônomo que importa melhorias da base global upstream enquanto protege de forma determinística as fontes e customizações exclusivas desenvolvidas pelo Project Nox.
-- **Publicação Automática:** Cada alteração aprovada na branch principal compila os pacotes e publica os novos artefatos e o índice Protobuf/JSON diretamente no repositório [`manga-extensoes`](https://github.com/Awerkori/manga-extensoes).
+- **Publicação Automática:** Cada alteração aprovada na branch principal compila os pacotes e publica os novos artefatos e o índice Protobuf/JSON diretamente no repositório [`manga-extensoes`](https://github.com/ProjectNox-org/manga-extensoes).
 
 ---
 
@@ -50,7 +50,7 @@ O projeto é organizado de forma modular em Gradle:
 
 ### Clonar o projeto
 ```bash
-git clone https://github.com/Awerkori/manga-fonte-extensoes.git
+git clone https://github.com/ProjectNox-org/manga-fonte-extensoes.git
 cd manga-fonte-extensoes
 ```
 
@@ -79,7 +79,7 @@ O arquivo APK compilado será gerado em:
 
 Contribuições da comunidade são muito bem-vindas:
 
-1. **Consulte a Central de Pedidos:** Antes de iniciar o desenvolvimento, verifique na [Central de Pedidos](https://github.com/Awerkori/project-nox-requests) se já existe uma demanda aberta ou em andamento.
+1. **Consulte a Central de Pedidos:** Antes de iniciar o desenvolvimento, verifique na [Central de Pedidos](https://github.com/ProjectNox-org/project-nox-requests) se já existe uma demanda aberta ou em andamento.
 2. **Crie uma branch semântica:** Baseie-se na branch `main` e nomeie de forma clara (ex: `fix/nome-da-fonte` ou `feat/nova-fonte`).
 3. **Mantenha os padrões técnicos:** Use seletores estáveis, evite dependências desnecessárias e garanta que `./gradlew spotlessApply` seja executado antes do commit.
 4. **Envie seu Pull Request:** Descreva as alterações realizadas, os testes feitos no emulador ou dispositivo físico e anexe evidências se apropriado.
@@ -90,18 +90,18 @@ Contribuições da comunidade são muito bem-vindas:
 
 Se encontrar uma extensão que parou de carregar imagens, apresentou erro de decodificação ou sofreu alteração de layout no site de origem:
 
-- 🎫 **Abrir solicitação oficial:** [Project Nox · Central de Pedidos](https://github.com/Awerkori/project-nox-requests)
-- 📊 **Acompanhar status em tempo real:** [Project Nox · Tracker](https://awerkori.github.io/project-nox-tracker/)
+- 🎫 **Abrir solicitação oficial:** [Project Nox · Central de Pedidos](https://github.com/ProjectNox-org/project-nox-requests)
+- 📊 **Acompanhar status em tempo real:** [Project Nox · Tracker](https://projectnox-org.github.io/project-nox-tracker/)
 
 ---
 
 ## 🔗 Projetos Relacionados
 
-- 📦 [**Project Nox · Extensões de Mangá**](https://github.com/Awerkori/manga-extensoes) — Repositório de distribuição (APKs compilados e índice para o aplicativo).
-- 🎬 [**Project Nox · Extensões de Anime**](https://github.com/Awerkori/anime-extensoes) — Catálogo de extensões de anime para Aniyomi e forks.
-- 💻 [**Project Nox · Código-fonte das Extensões de Anime**](https://github.com/Awerkori/anime-fonte-extensoes) — Código-fonte e extractors de vídeo.
-- 🌐 [**Project Nox · Plataforma Web de Mangá**](https://github.com/Awerkori/project-nox-manga) — Leitor web oficial do Project Nox.
-- ⚙️ [**Project Nox · Importer**](https://github.com/Awerkori/project-nox-importer) — Serviço de ingestão contínua de catálogo 24/7.
+- 📦 [**Project Nox · Extensões de Mangá**](https://github.com/ProjectNox-org/manga-extensoes) — Repositório de distribuição (APKs compilados e índice para o aplicativo).
+- 🎬 [**Project Nox · Extensões de Anime**](https://github.com/ProjectNox-org/anime-extensoes) — Catálogo de extensões de anime para Aniyomi e forks.
+- 💻 [**Project Nox · Código-fonte das Extensões de Anime**](https://github.com/ProjectNox-org/anime-fonte-extensoes) — Código-fonte e extractors de vídeo.
+- 🌐 [**Project Nox · Plataforma Web de Mangá**](https://github.com/ProjectNox-org/project-nox-manga) — Leitor web oficial do Project Nox.
+- ⚙️ [**Project Nox · Importer**](https://github.com/ProjectNox-org/project-nox-importer) — Serviço de ingestão contínua de catálogo 24/7.
 
 ---
 
@@ -138,7 +138,7 @@ and combined work) and the Apache License, Version 2.0 (for upstream Keiyoushi c
 
 ### 🔄 Sincronização Upstream e Governança
 - O Project Nox sincroniza periodicamente atualizações do ecossistema Keiyoushi mantendo os créditos e licenças Apache 2.0 originais intactos.
-- Todo o ciclo de vida, melhorias e extensões específicas do Project Nox são mantidos exclusivamente dentro da organização `Awerkori`. Nenhum Pull Request é aberto ou enviado para os repositórios upstream do Keiyoushi, assegurando preservação da autonomia do projeto e estabilidade da sincronização a jusante.
+- Todo o ciclo de vida, melhorias e extensões específicas do Project Nox são mantidos exclusivamente dentro da organização `ProjectNox-org`. Nenhum Pull Request é aberto ou enviado para os repositórios upstream do Keiyoushi, assegurando preservação da autonomia do projeto e estabilidade da sincronização a jusante.
 
 ### 📌 Interação Remota de Rede (GNU AGPLv3 Seção 13)
 O Project Nox adota oficialmente a licença **GNU AGPL versão 3.0**. Em estrita conformidade com a Seção 13 da AGPLv3, caso uma versão modificada deste software seja operada em servidores ou instâncias acessíveis através de uma rede de computadores com interação remota de usuários, o operador deve oferecer a todos esses usuários remotos a oportunidade de obter o Código-Fonte Correspondente (Corresponding Source) da versão modificada em execução, sem custos e através de meio habitual de disponibilização de software em rede.
