@@ -86,7 +86,7 @@ jobs:
           [[ "$(jq -r '.status' <<<"$RUN_JSON")" == "completed" ]]
           SOURCE_SHA="$(jq -r '.head_sha' <<<"$RUN_JSON")"
           MODULE_PATH="src/${REUSE_MODULE/./\/}"
-          git diff --quiet "$SOURCE_SHA" "$GITHUB_SHA" -- "$MODULE_PATH" core compiler common gradle lib lib-multisrc build.gradle.kts settings.gradle.kts gradle.properties
+          git diff --quiet "$SOURCE_SHA" "$GITHUB_SHA" -- "$MODULE_PATH" core compiler common gradle lib lib-multisrc build.gradle.kts settings.gradle.kts gradle.properties gradlew
           JOBS_JSON="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$REUSE_ARTIFACT_RUN_ID/jobs")"
           jq -e '[.jobs[] | select(.name | startswith("Build extensions"))] as $builds | ($builds | length) > 0 and all($builds[]; .conclusion == "success")' <<<"$JOBS_JSON"
           ARTIFACT_COUNT="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REUSE_ARTIFACT_RUN_ID/artifacts" --jq '[.artifacts[] | select(.name | startswith("individual-apks-")) | select(.expired == false)] | length')"
