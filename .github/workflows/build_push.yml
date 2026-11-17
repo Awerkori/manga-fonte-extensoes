@@ -103,11 +103,12 @@ jobs:
         env:
           INPUT_BASE_SHA: ${{ inputs.base_sha }}
           FORCE_ALL: ${{ inputs.force_all }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           TARGET_BASE="${INPUT_BASE_SHA:-$NX_BASE}"
-          if [[ -z "$INPUT_BASE_SHA" && "$GITHUB_EVENT_NAME" == "push" && -n "$GITHUB_EVENT_BEFORE" && "$GITHUB_EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]] &&
-            git diff --quiet "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA" -- . ':!.github/**'; then
-            TARGET_BASE="$GITHUB_EVENT_BEFORE"
+          if [[ -z "$INPUT_BASE_SHA" && "$GITHUB_EVENT_NAME" == "push" && -n "$PUSH_BEFORE_SHA" && "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]] &&
+            git diff --quiet "$PUSH_BEFORE_SHA" "$GITHUB_SHA" -- . ':!.github/**'; then
+            TARGET_BASE="$PUSH_BEFORE_SHA"
             echo "BUILD_BASE_REASON=INFRASTRUCTURE_ONLY_PUSH"
           fi
           python ./.github/scripts/generate-build-matrices.py "$TARGET_BASE" Release
