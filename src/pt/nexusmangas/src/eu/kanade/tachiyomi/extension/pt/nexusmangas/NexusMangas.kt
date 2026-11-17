@@ -12,6 +12,7 @@ import keiyoushi.network.post
 import keiyoushi.source.KeiSource
 import keiyoushi.utils.firstInstanceOrNull
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.stringOrNull
 import keiyoushi.utils.toJsonElement
 import keiyoushi.utils.toJsonRequestBody
 import kotlinx.coroutines.async
@@ -116,17 +117,19 @@ abstract class NexusMangas : KeiSource() {
     override fun getChapterUrl(chapter: SChapter) = "$baseUrl${chapter.url.substringBefore('#')}"
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val id = chapter.url.substringAfter('#').takeIf { it.isNotBlank() }
+        val id = chapter.memo["id"]?.stringOrNull
+            ?: chapter.url.substringAfter('#', "").takeIf { it.isNotBlank() }
             ?: throw Exception("Atualize a lista de capítulos para abrir este capítulo.")
-        val pages = client.get(
-            "$API_URL/chapters".toHttpUrl().newBuilder()
-                .addQueryParameter("select", "pages")
-                .addQueryParameter("id", "eq.$id")
-                .build().toString(),
+        val response = client.post(
+            "$FUNCTIONS_URL/read-chapter",
             apiHeaders,
-        ).parseAs<List<ReaderPagesDto>>().firstOrNull()?.pages.orEmpty()
-        require(pages.isNotEmpty()) { "Este capítulo não está disponível gratuitamente no Nexus Mangas." }
-        return pages.mapIndexed { index, image -> Page(index, imageUrl = image) }
+            ReadChapterRequest(id).toJsonRequestBody(),
+        ).parseAs<ReadChapterResponse>()
+        val pages = response.chapter?.pages.orEmpty()
+        require(response.access?.allowed != false && pages.isNotEmpty()) {
+            "Este capítulo não está disponível gratuitamente no Nexus Mangas."
+        }
+        return pages.mapIndexed { index, image -> Page(index, imageUrl = image.toCdnUrl()) }
     }
 
     override val supportsFilterFetching = true
@@ -168,14 +171,13 @@ abstract class NexusMangas : KeiSource() {
 
     private suspend fun getChapters(workId: String, slug: String): List<SChapter> = client.get(
         "$API_URL/chapters".toHttpUrl().newBuilder()
-            .addQueryParameter("select", "id,number,title,created_at,pages,scan:scans(name)")
+            .addQueryParameter("select", "id,number,title,created_at,scan:scans(name)")
             .addQueryParameter("work_id", "eq.$workId")
             .addQueryParameter("order", "number.desc")
             .addQueryParameter("limit", MAX_CHAPTERS.toString())
             .build().toString(),
         apiHeaders,
     ).parseAs<List<ChapterDto>>()
-        .filter { it.pages.isNotEmpty() }
         .map { it.toSChapter(slug) }
 
     private suspend fun getFilterOptions(table: String): List<FilterOptionDto> = client.get(
@@ -196,7 +198,9 @@ abstract class NexusMangas : KeiSource() {
             .build()
 
     private companion object {
-        const val API_URL = "https://supabase.nexusmangas.com/rest/v1"
+        const val SUPABASE_URL = "https://supabase.nexusmangas.com"
+        const val API_URL = "$SUPABASE_URL/rest/v1"
+        const val FUNCTIONS_URL = "$SUPABASE_URL/functions/v1"
         const val PAGE_SIZE = 24
         const val LATEST_LIMIT = 900
         const val POPULAR_LIMIT = 120

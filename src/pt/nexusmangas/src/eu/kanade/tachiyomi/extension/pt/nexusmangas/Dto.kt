@@ -41,7 +41,7 @@ internal class WorkDto(
     fun toSManga() = SManga.create().apply {
         url = "/obra/$slug"
         title = this@WorkDto.title
-        thumbnail_url = coverUrl
+        thumbnail_url = coverUrl?.takeIf(String::isNotBlank)?.toCdnUrl()
         description = listOfNotNull(
             description?.takeIf(String::isNotBlank),
             alternativeTitle?.takeIf(String::isNotBlank)?.let { "Título alternativo: $it" },
@@ -81,7 +81,6 @@ internal class ChapterDto(
     val number: Float? = null,
     val title: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
-    val pages: List<String> = emptyList(),
     val scan: ScanDto? = null,
 ) {
     fun toSChapter(slug: String) = SChapter.create().apply {
@@ -96,7 +95,23 @@ internal class ChapterDto(
 }
 
 @Serializable
-internal class ReaderPagesDto(val pages: List<String> = emptyList())
+internal class ReadChapterRequest(val chapterId: String)
+
+@Serializable
+internal class ReadChapterResponse(
+    val access: ReadChapterAccessDto? = null,
+    val chapter: ReaderChapterDto? = null,
+)
+
+@Serializable
+internal class ReadChapterAccessDto(val allowed: Boolean = false)
+
+@Serializable
+internal class ReaderChapterDto(val pages: List<String> = emptyList())
+
+internal fun String.toCdnUrl(): String = if (startsWith("http")) this else "$CDN_URL/${removePrefix("/")}"
+
+private const val CDN_URL = "https://assets.nexusmangas.com"
 
 @Serializable
 internal class FilterOptionDto(val id: String, val name: String)
