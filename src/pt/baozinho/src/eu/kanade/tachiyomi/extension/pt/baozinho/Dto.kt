@@ -27,9 +27,22 @@ class ChapterDto(
 }
 
 @Serializable
+class SinaisDto(
+    private val webdriver: Boolean = false,
+    private val headless: Boolean = false,
+)
+
+@Serializable
 class SessionRequest(
     private val capId: Long,
     private val largura: Int = 1080,
+    private val sinais: SinaisDto = SinaisDto(),
+    private val turnstileToken: String? = null,
+)
+
+@Serializable
+class ChallengeDto(
+    val desafio: String? = null,
 )
 
 @Serializable
