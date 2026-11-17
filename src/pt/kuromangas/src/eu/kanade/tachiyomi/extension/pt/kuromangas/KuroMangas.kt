@@ -321,7 +321,7 @@ abstract class KuroMangas :
         return syncWebViewCookies()
     }
 
-    // Implicit set-cookie: kuro_session + _vx
+    // Implicit set-cookie: kuro_session + _sq
     private fun login(): Boolean {
         val email = preferences.getString(PREF_EMAIL, "").orEmpty().trim()
         val password = preferences.getString(PREF_PASSWORD, "").orEmpty()
