@@ -26,26 +26,27 @@ class KuroMangasTest {
 
     @Test
     fun constantsMatchCurrentWebsite() {
-        assertEquals("_vx", TOKEN_COOKIE)
-        assertEquals("X-Request-Ctx", TOKEN_HEADER)
-        assertEquals("8at7vo8l6sai74jyIHfE2oeshoforanuYTusF4jKdqEwhUEft9dsadcxzsaipnjm8", DEFAULT_ENC_KEY)
-        assertEquals("kuromangas.com::v2", HOSTNAME_PART)
-        assertEquals("x9_4v2_b", ANTIBOT)
+        assertEquals("_sq", TOKEN_COOKIE)
+        assertEquals("X-Ui-Seq", TOKEN_HEADER)
+        assertEquals("x-rq-tag", DATA_KEY_HEADER)
+        assertEquals("8at7vo8l6sai74jyIHfE2oeshoforanuYTusF4jKdqEwhUEftes9dsadcxzsaipnjm8", DEFAULT_ENC_KEY)
+        assertEquals("kuromangas.com", HOSTNAME_PART)
+        assertEquals("k4r_p9w2", ANTIBOT)
     }
 
     @Test
     fun derivesPasswordWithExpectedMd5Suffix() {
         val decryptor = KuroMangasDecryptor("https://kuromangas.com", OkHttpClient()) { true }
         val date = "2026-10-17"
-        val expectedToHash = "2026-10-17kuromangas.com::v2x9_4v2_b"
+        val expectedToHash = "k4r_p9w2|2026-10-17|kuromangas.com"
         val expectedMd5 = MessageDigest.getInstance("MD5")
             .digest(expectedToHash.toByteArray())
             .joinToString("") { "%02x".format(it) }
-            .substring(0, 8)
+            .substring(6, 16)
 
         val derived = decryptor.derivePassword(date)
         assertEquals(DEFAULT_ENC_KEY + expectedMd5, derived)
-        assertEquals(DEFAULT_ENC_KEY.length + 8, derived.length)
+        assertEquals(DEFAULT_ENC_KEY.length + 10, derived.length)
     }
 
     @Test
@@ -374,7 +375,7 @@ class KuroMangasTest {
 
         assertNull(client.getCookie(baseUrl, TOKEN_COOKIE))
 
-        val cookie1 = Cookie.Builder().domain("kuromangas.com").path("/").name("_vx").value("test_token_123").build()
+        val cookie1 = Cookie.Builder().domain("kuromangas.com").path("/").name("_sq").value("test_token_123").build()
         val cookie2 = Cookie.Builder().domain("kuromangas.com").path("/").name("kuro_session").value("session_abc").build()
         cookieJar.saveFromResponse(httpUrl, listOf(cookie1, cookie2))
 
@@ -384,13 +385,13 @@ class KuroMangasTest {
 
     @Test
     fun extractCookieFromHeaderExtractsCorrectly() {
-        val header = "cf_clearance=cf123; kuro_session=sess456; _vx=token789; other=xyz"
+        val header = "cf_clearance=cf123; kuro_session=sess456; _sq=token789; other=xyz"
         assertEquals("sess456", extractCookieFromHeader(header, "kuro_session"))
-        assertEquals("token789", extractCookieFromHeader(header, "_vx"))
+        assertEquals("token789", extractCookieFromHeader(header, "_sq"))
         assertEquals("cf123", extractCookieFromHeader(header, "cf_clearance"))
         assertNull(extractCookieFromHeader(header, "missing_cookie"))
-        assertNull(extractCookieFromHeader(null, "_vx"))
-        assertNull(extractCookieFromHeader("", "_vx"))
+        assertNull(extractCookieFromHeader(null, "_sq"))
+        assertNull(extractCookieFromHeader("", "_sq"))
     }
 
     @Test

@@ -19,16 +19,18 @@ import okio.GzipSource
 import okio.InflaterSource
 import okio.buffer
 import java.io.IOException
+import java.net.URLDecoder
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.util.zip.Inflater
 
-const val HOSTNAME_PART = "kuromangas.com::v2"
-const val ANTIBOT = "x9_4v2_b"
-const val DEFAULT_ENC_KEY = "8at7vo8l6sai74jyIHfE2oeshoforanuYTusF4jKdqEwhUEft9dsadcxzsaipnjm8"
-const val TOKEN_COOKIE = "_vx"
-const val TOKEN_HEADER = "X-Request-Ctx"
+const val HOSTNAME_PART = "kuromangas.com"
+const val ANTIBOT = "k4r_p9w2"
+const val DEFAULT_ENC_KEY = "8at7vo8l6sai74jyIHfE2oeshoforanuYTusF4jKdqEwhUEftes9dsadcxzsaipnjm8"
+const val TOKEN_COOKIE = "_sq"
+const val TOKEN_HEADER = "X-Ui-Seq"
+const val DATA_KEY_HEADER = "x-rq-tag"
 private const val LOGIN_EXPIRED_MESSAGE = "Sessão recusada pelo site. Refaça o login no WebView ou revise email e senha nas configurações."
 
 private val encKeyRegex = Regex("""ENCRYPTION_KEY\s*[:=]\s*["']([^"']+)["']""")
@@ -58,13 +60,15 @@ class KuroMangasDecryptor(
             return@Interceptor chain.proceed(originalRequest)
         }
 
-        fun resolveToken(): String? = tokenProvider?.invoke()
-            ?: client.getCookie(baseUrl, TOKEN_COOKIE)
-            ?: runCatching {
-                val manager = android.webkit.CookieManager.getInstance()
-                val cookieStr = manager.getCookie(baseUrl) ?: manager.getCookie("$baseUrl/")
-                extractCookieFromHeader(cookieStr, TOKEN_COOKIE)
-            }.getOrNull()
+        fun resolveToken(): String? = (
+            tokenProvider?.invoke()
+                ?: client.getCookie(baseUrl, TOKEN_COOKIE)
+                ?: runCatching {
+                    val manager = android.webkit.CookieManager.getInstance()
+                    val cookieStr = manager.getCookie(baseUrl) ?: manager.getCookie("$baseUrl/")
+                    extractCookieFromHeader(cookieStr, TOKEN_COOKIE)
+                }.getOrNull()
+            )?.let(::decodeUriComponent)
 
         fun newRequest(): Request {
             val token = resolveToken() ?: return originalRequest
@@ -85,7 +89,7 @@ class KuroMangasDecryptor(
                 return execute(newRequest(), true)
             }
 
-            val dataKey = rawResponse.headers["x-kuro-datakey"] ?: return rawResponse
+            val dataKey = rawResponse.headers[DATA_KEY_HEADER] ?: return rawResponse
 
             val response = rawResponse.decompressIfNeeded()
 
@@ -180,11 +184,12 @@ class KuroMangasDecryptor(
     }.getOrNull()
 
     fun derivePassword(date: String = LocalDate.now(ZoneOffset.UTC).toString()): String {
-        val toHash = "$date$HOSTNAME_PART$ANTIBOT"
+        val host = runCatching { baseUrl.toHttpUrl().host }.getOrDefault(HOSTNAME_PART)
+        val toHash = "$ANTIBOT|$date|$host"
         val md5Part = MessageDigest.getInstance("MD5")
             .digest(toHash.toByteArray())
             .joinToString("") { "%02x".format(it) }
-            .substring(0, 8)
+            .substring(6, 16)
         return (viteApiEncKey ?: DEFAULT_ENC_KEY) + md5Part
     }
 
@@ -380,3 +385,6 @@ fun extractCookieFromHeader(cookieHeader: String?, name: String): String? {
         ?.groupValues?.get(1)?.trim()
         ?.takeIf { it.isNotEmpty() }
 }
+
+private fun decodeUriComponent(value: String): String = runCatching { URLDecoder.decode(value.replace("+", "%2B"), "UTF-8") }
+    .getOrDefault(value)
