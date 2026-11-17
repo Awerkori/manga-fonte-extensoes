@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "ToonLivre"
-    versionCode = 93
+    versionCode = 95
     contentWarning = ContentWarning.SAFE
     libVersion = "1.6"
 
@@ -17,4 +17,27 @@ keiyoushi {
         id = 2834885536325274328L
         versionId = 2
     }
+
+    deeplink {
+        path("/..*")
+    }
+}
+
+android {
+    sourceSets.named("test") {
+        kotlin.directories.add("test")
+    }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+}
+
+dependencies {
+    testImplementation(libs.junit)
+    testImplementation(libs.bundles.common)
+    testImplementation(libs.tachiyomi.lib.v16)
+}
+
+tasks.matching { it.name.startsWith("ksp") && it.name.contains("UnitTest") }.configureEach {
+    enabled = false
 }
