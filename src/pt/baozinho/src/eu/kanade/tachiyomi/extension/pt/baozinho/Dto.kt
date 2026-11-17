@@ -21,6 +21,9 @@ class ChapterDto(
         chapter_number = numero
         date_upload = Instant.tryParse(lancadoEm)
         url = "capitulo-${numero.toString().removeSuffix(".0")}"
+        if (!gratuito) {
+            scanlator = if (precoEmBaos > 0) "🔒 $precoEmBaos baos" else "🔒 VIP"
+        }
         memo = buildJsonObject {
             put("slug", slug)
             put("capId", id)
@@ -66,6 +69,19 @@ class RefreshRequest(
 class AuthResponseDto(
     val accessToken: String,
     val refreshToken: String,
+)
+
+@Serializable
+class DailyTicketRequest(
+    private val capId: Long,
+)
+
+@Serializable
+class TagDto(
+    private val id: Int,
+    val nome: String,
+    val slug: String,
+    private val obrasCount: Int = 0,
 )
 
 @Serializable

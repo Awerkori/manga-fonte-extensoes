@@ -5,6 +5,7 @@ import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -20,16 +21,19 @@ import keiyoushi.source.KeiSource
 import keiyoushi.utils.asJsoup
 import keiyoushi.utils.booleanOrNull
 import keiyoushi.utils.extractNextJs
+import keiyoushi.utils.firstInstanceOrNull
 import keiyoushi.utils.getLocalStorage
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.getTurnstileToken
 import keiyoushi.utils.intOrNull
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.string
+import keiyoushi.utils.toJsonElement
 import keiyoushi.utils.toJsonRequestBody
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonElement
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -68,10 +72,40 @@ abstract class Baozinho :
     }
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val url = "$baseUrl/busca".toHttpUrl().newBuilder()
-            .addQueryParameter("q", query)
-            .build()
+        val url = "$baseUrl/busca".toHttpUrl().newBuilder().apply {
+            if (query.isNotBlank()) addQueryParameter("q", query)
+            filters.firstInstanceOrNull<OrderFilter>()?.selected?.takeIf { it.isNotEmpty() }?.let {
+                addQueryParameter("orderBy", it)
+            }
+            filters.firstInstanceOrNull<FormatFilter>()?.selected?.takeIf { it.isNotEmpty() }?.let {
+                addQueryParameter("formatoSlug", it)
+            }
+            filters.firstInstanceOrNull<GenreFilter>()?.state
+                ?.filter { it.state }
+                ?.map { it.slug }
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { addQueryParameter("tagSlugs", it.joinToString(",")) }
+        }.build()
         return parseMangasPage(client.get(url, Fetch.DOCUMENT))
+    }
+
+    override val supportsFilterFetching = true
+
+    override suspend fun fetchFilterData(): JsonElement = client.get("$baseUrl/busca", Fetch.DOCUMENT)
+        .asJsoup()
+        .extractNextJs<List<TagDto>>()
+        .orEmpty()
+        .toJsonElement()
+
+    override fun getFilterList(data: JsonElement?): FilterList {
+        val tags = data?.parseAs<List<TagDto>>().orEmpty()
+        return FilterList(
+            listOfNotNull(
+                OrderFilter(),
+                FormatFilter(),
+                if (tags.isNotEmpty()) GenreFilter(tags.map { TagCheckBox(it.nome, it.slug) }) else null,
+            ),
+        )
     }
 
     private fun parseMangasPage(response: Response): MangasPage {
@@ -210,13 +244,31 @@ abstract class Baozinho :
         allowUnlock: Boolean,
     ): SessionDto {
         if (code == 403 || code == 402) {
-            if (allowUnlock && token != null && precoEmBaos > 0 && preferences.getBoolean(PREF_AUTO_UNLOCK, false)) {
-                unlockChapter(capId, token, precoEmBaos)
-                return openSession(capId, chapterUrl, token, precoEmBaos, allowRetryAuth = false, allowUnlock = false)
+            if (allowUnlock && token != null) {
+                if (preferences.getBoolean(PREF_USE_DAILY_TICKET, false) && tryUseDailyTicket(capId, token)) {
+                    return openSession(capId, chapterUrl, token, precoEmBaos, allowRetryAuth = false, allowUnlock = false)
+                }
+                if (precoEmBaos > 0 && preferences.getBoolean(PREF_AUTO_UNLOCK, false)) {
+                    unlockChapter(capId, token, precoEmBaos)
+                    return openSession(capId, chapterUrl, token, precoEmBaos, allowRetryAuth = false, allowUnlock = false)
+                }
             }
             throw IOException(lockedChapterMessage(precoEmBaos, loggedIn = token != null, serverMessage = error?.message))
         }
         throw IOException(error?.message ?: "HTTP error $code")
+    }
+
+    private suspend fun tryUseDailyTicket(capId: Long, token: String): Boolean {
+        val response = client.post(
+            "$API_URL/recompensas/diaria/resgatar",
+            authHeaders(token),
+            Fetch.XHR,
+            DailyTicketRequest(capId).toJsonRequestBody(),
+            ensureSuccess = false,
+        )
+        val ok = response.isSuccessful
+        response.close()
+        return ok
     }
 
     private suspend fun unlockChapter(capId: Long, token: String, precoEmBaos: Int) {
@@ -368,6 +420,13 @@ abstract class Baozinho :
         }.let(screen::addPreference)
 
         SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_USE_DAILY_TICKET
+            title = "Usar bilhete diário automaticamente"
+            summary = "Tenta resgatar o bilhete diário ao abrir capítulos bloqueados quando você estiver logado."
+            setDefaultValue(false)
+        }.let(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
             key = PREF_AUTO_UNLOCK
             title = "Desbloquear capítulos pagos automaticamente"
             summary = "Gasta moedas (baos) automaticamente ao abrir capítulos pagos quando você estiver logado."
@@ -375,12 +434,46 @@ abstract class Baozinho :
         }.let(screen::addPreference)
     }
 
+    private class OrderFilter :
+        Filter.Select<String>(
+            "Ordenar por",
+            arrayOf("Mais populares", "Mais recentes", "Mais atualizadas", "Melhor avaliados", "A–Z", "Z–A"),
+        ) {
+        val selected: String
+            get() = when (state) {
+                0 -> "populares_total"
+                2 -> "atualizadas"
+                3 -> "rating"
+                4 -> "alfabetica_az"
+                5 -> "alfabetica_za"
+                else -> ""
+            }
+    }
+
+    private class FormatFilter :
+        Filter.Select<String>(
+            "Formato",
+            arrayOf("Todos os formatos", "Manhua", "Manhwa"),
+        ) {
+        val selected: String
+            get() = when (state) {
+                1 -> "manhua"
+                2 -> "manhwa"
+                else -> ""
+            }
+    }
+
+    private class TagCheckBox(name: String, val slug: String) : Filter.CheckBox(name)
+
+    private class GenreFilter(tags: List<TagCheckBox>) : Filter.Group<TagCheckBox>("Gênero", tags)
+
     companion object {
         private const val API_URL = "https://api.baozinho.com"
         private const val TURNSTILE_SITE_KEY = "0x4AAAAAADtmuUfMFzDWFmF8"
 
         private const val PREF_EMAIL = "baozinho_email"
         private const val PREF_PASSWORD = "baozinho_password"
+        private const val PREF_USE_DAILY_TICKET = "baozinho_use_daily_ticket"
         private const val PREF_AUTO_UNLOCK = "baozinho_auto_unlock"
         private const val PREF_ACCESS_TOKEN = "baozinho_access_token"
         private const val PREF_REFRESH_TOKEN = "baozinho_refresh_token"
