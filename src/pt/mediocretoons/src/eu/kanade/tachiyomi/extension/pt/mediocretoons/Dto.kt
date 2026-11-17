@@ -18,8 +18,18 @@ class LoginRequestDto(
 )
 
 @Serializable
-class LoginDto(
+class LoginResponseDto(
+    val message: String? = null,
+    val statusCode: Int? = null,
+    @SerialName("usr_id") private val usrId: Int? = null,
+    @SerialName("usr_nome") private val usrNome: String? = null,
+    @SerialName("usr_nick") private val usrNick: String? = null,
+    @SerialName("usr_titulo") private val usrTitulo: String? = null,
+    @SerialName("usr_imagem") private val usrImagem: String? = null,
+    @SerialName("usr_banner") private val usrBanner: String? = null,
+    @SerialName("vip_acabaem") private val vipAcabaEm: String? = null,
     val token: String? = null,
+    @SerialName("refresh_token") private val refreshToken: String? = null,
 )
 
 @Serializable
@@ -105,8 +115,12 @@ class MangaDetailsDto(
 
 @Serializable
 class ChapterDetailsDto(
+    @SerialName("cap_id") private val id: Int = 0,
     @SerialName("cap_uuid") private val uuid: String,
     @SerialName("cap_num") private val num: Float,
+    @SerialName("cap_tipo") val tipo: String? = null,
+    @SerialName("cap_paginas_count") private val paginasCount: Int = 0,
+    @SerialName("cap_conteudo_texto") val conteudoTexto: String? = null,
     @SerialName("obr_id") private val mangaId: Int,
 ) {
     val pageListUrl get() = "$CDN_URL/obras/$mangaId/capitulos/${num.toString().removeSuffix(".0")}/$uuid.json"

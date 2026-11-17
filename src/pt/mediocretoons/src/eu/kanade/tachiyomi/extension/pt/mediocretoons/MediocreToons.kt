@@ -109,7 +109,7 @@ abstract class MediocreToons :
         }
 
         val session = try {
-            response.parseAs<LoginDto>()
+            response.parseAs<LoginResponseDto>()
         } catch (e: SerializationException) {
             throw IOException(LOGIN_INVALID_RESPONSE_ERROR, e)
         }
@@ -189,6 +189,15 @@ abstract class MediocreToons :
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val details = client.get("$API_URL/capitulos/${chapter.url.substringAfter("/capitulo/")}", Fetch.XHR).parseAs<ChapterDetailsDto>()
+
+        if (details.tipo?.lowercase() == "markdown") {
+            val text = details.conteudoTexto.orEmpty()
+            return if (text.isBlank()) {
+                listOf(Page(0, imageUrl = ""))
+            } else {
+                listOf(Page(0, imageUrl = "text://$text"))
+            }
+        }
 
         return client.get(details.pageListUrl, Fetch.XHR).parseAs<List<PageDto>>().toPageList()
     }
