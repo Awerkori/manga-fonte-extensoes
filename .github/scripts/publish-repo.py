@@ -409,7 +409,8 @@ def main():
         badgeLabel="NOX",
         signingKey="144f44e865cbfae6bde110489ef7ec142f0b1681f627a093a218650e21db5dad",
         contact=index_pb2.Contact(
-            website="https://github.com/ProjectNox-org/manga-fonte-extensoes",
+            website="https://github.com/ProjectNox-org/project-nox-requests",
+            discord="https://discord.com/invite/qNAMYUEmGj",
         ),
         extensionList=index_pb2.ExtensionList(extensions=final_extensions),
     )
