@@ -21,6 +21,14 @@ on:
         required: false
         type: boolean
         default: false
+      reuse_artifact_run_id:
+        description: 'Reuse a successful build from this workflow run (requires reuse_module and an unchanged module source tree)'
+        required: false
+        default: ''
+      reuse_module:
+        description: 'Single module to publish from the reused build, for example pt.baozinho'
+        required: false
+        default: ''
 
 permissions: {}
 
@@ -39,19 +47,50 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.generate-matrices.outputs.matrix }}
-      delete: ${{ steps.generate-matrices.outputs.delete }}
-      has_build_modules: ${{ steps.generate-matrices.outputs.has_build_modules }}
-      has_deletions: ${{ steps.generate-matrices.outputs.has_deletions }}
-      publish_required: ${{ steps.generate-matrices.outputs.publish_required }}
-      publish_reason: ${{ steps.generate-matrices.outputs.publish_reason }}
-      module_count: ${{ steps.generate-matrices.outputs.module_count }}
-      delete_count: ${{ steps.generate-matrices.outputs.delete_count }}
+      delete: ${{ steps.select-publish-inputs.outputs.delete }}
+      has_build_modules: ${{ steps.select-publish-inputs.outputs.has_build_modules }}
+      has_deletions: ${{ steps.select-publish-inputs.outputs.has_deletions }}
+      publish_required: ${{ steps.select-publish-inputs.outputs.publish_required }}
+      publish_reason: ${{ steps.select-publish-inputs.outputs.publish_reason }}
+      module_count: ${{ steps.select-publish-inputs.outputs.module_count }}
+      delete_count: ${{ steps.select-publish-inputs.outputs.delete_count }}
     steps:
       - name: Checkout main branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Validate publish Python dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/nox-publish-venv"
+          "$RUNNER_TEMP/nox-publish-venv/bin/python" -m pip install --require-hashes --only-binary=:all: --requirement .github/scripts/requirements-publish.txt
+          "$RUNNER_TEMP/nox-publish-venv/bin/python" .github/scripts/test_publish_runtime.py
+
+      - name: Validate reused build artifacts
+        if: ${{ inputs.reuse_artifact_run_id != '' || inputs.reuse_module != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+          REUSE_ARTIFACT_RUN_ID: ${{ inputs.reuse_artifact_run_id }}
+          REUSE_MODULE: ${{ inputs.reuse_module }}
+          INPUT_BASE_SHA: ${{ inputs.base_sha }}
+        run: |
+          [[ "$REUSE_ARTIFACT_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$REUSE_MODULE" =~ ^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$ ]]
+          [[ "$INPUT_BASE_SHA" == "$GITHUB_SHA" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REUSE_ARTIFACT_RUN_ID")"
+          [[ "$(jq -r '.repository.full_name' <<<"$RUN_JSON")" == "$GITHUB_REPOSITORY" ]]
+          [[ "$(jq -r '.path' <<<"$RUN_JSON")" == ".github/workflows/build_push.yml" ]]
+          [[ "$(jq -r '.head_branch' <<<"$RUN_JSON")" == "main" ]]
+          [[ "$(jq -r '.status' <<<"$RUN_JSON")" == "completed" ]]
+          SOURCE_SHA="$(jq -r '.head_sha' <<<"$RUN_JSON")"
+          MODULE_PATH="src/${REUSE_MODULE/./\/}"
+          git diff --quiet "$SOURCE_SHA" "$GITHUB_SHA" -- "$MODULE_PATH" core compiler common gradle lib lib-multisrc build.gradle.kts settings.gradle.kts gradle.properties
+          JOBS_JSON="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$REUSE_ARTIFACT_RUN_ID/jobs")"
+          jq -e '[.jobs[] | select(.name | startswith("Build extensions"))] as $builds | ($builds | length) > 0 and all($builds[]; .conclusion == "success")' <<<"$JOBS_JSON"
+          ARTIFACT_COUNT="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REUSE_ARTIFACT_RUN_ID/artifacts" --jq '[.artifacts[] | select(.name | startswith("individual-apks-")) | select(.expired == false)] | length')"
+          (( ARTIFACT_COUNT > 0 ))
 
       - name: Get last successful CI commit
         if: ${{ !(inputs.base_sha) }}
@@ -66,7 +105,47 @@ jobs:
           FORCE_ALL: ${{ inputs.force_all }}
         run: |
           TARGET_BASE="${INPUT_BASE_SHA:-$NX_BASE}"
+          if [[ -z "$INPUT_BASE_SHA" && "$GITHUB_EVENT_NAME" == "push" && -n "$GITHUB_EVENT_BEFORE" && "$GITHUB_EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]] &&
+            git diff --quiet "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA" -- . ':!.github/**'; then
+            TARGET_BASE="$GITHUB_EVENT_BEFORE"
+            echo "BUILD_BASE_REASON=INFRASTRUCTURE_ONLY_PUSH"
+          fi
           python ./.github/scripts/generate-build-matrices.py "$TARGET_BASE" Release
+
+      - id: select-publish-inputs
+        name: Select build or artifact-reuse inputs
+        env:
+          REUSE_ARTIFACT_RUN_ID: ${{ inputs.reuse_artifact_run_id }}
+          REUSE_MODULE: ${{ inputs.reuse_module }}
+          DELETE: ${{ steps.generate-matrices.outputs.delete }}
+          HAS_BUILD_MODULES: ${{ steps.generate-matrices.outputs.has_build_modules }}
+          HAS_DELETIONS: ${{ steps.generate-matrices.outputs.has_deletions }}
+          PUBLISH_REQUIRED: ${{ steps.generate-matrices.outputs.publish_required }}
+          PUBLISH_REASON: ${{ steps.generate-matrices.outputs.publish_reason }}
+          MODULE_COUNT: ${{ steps.generate-matrices.outputs.module_count }}
+          DELETE_COUNT: ${{ steps.generate-matrices.outputs.delete_count }}
+        run: |
+          if [[ -n "$REUSE_ARTIFACT_RUN_ID" || -n "$REUSE_MODULE" ]]; then
+            {
+              echo "delete=$(python3 -c 'import json, os; print(json.dumps([os.environ["REUSE_MODULE"]]))')"
+              echo "has_build_modules=false"
+              echo "has_deletions=true"
+              echo "publish_required=true"
+              echo "publish_reason=REUSED_ARTIFACT"
+              echo "module_count=0"
+              echo "delete_count=1"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "delete=$DELETE"
+              echo "has_build_modules=$HAS_BUILD_MODULES"
+              echo "has_deletions=$HAS_DELETIONS"
+              echo "publish_required=$PUBLISH_REQUIRED"
+              echo "publish_reason=$PUBLISH_REASON"
+              echo "module_count=$MODULE_COUNT"
+              echo "delete_count=$DELETE_COUNT"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     name: Build extensions (${{ matrix.chunk.number }})
@@ -146,6 +225,41 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ~/apk-artifacts
+      - name: Download reused APK artifacts
+        if: ${{ inputs.reuse_artifact_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: individual-apks-*
+          merge-multiple: true
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.reuse_artifact_run_id }}
+          github-token: ${{ secrets.SYNC_PAT }}
+          path: ${{ runner.temp }}/reused-apk-artifacts
+      - name: Keep only requested module artifact
+        if: ${{ inputs.reuse_artifact_run_id != '' }}
+        env:
+          REUSE_MODULE: ${{ inputs.reuse_module }}
+          SOURCE_ARTIFACTS: ${{ runner.temp }}/reused-apk-artifacts
+        run: |
+          python3 - "$REUSE_MODULE" "$SOURCE_ARTIFACTS" "$HOME/apk-artifacts" <<'PY'
+          import json
+          import shutil
+          import sys
+          from pathlib import Path
+
+          module, source, destination = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
+          matches = [
+              path for path in source.glob("**/keiyoushi-source-info.json")
+              if json.loads(path.read_text(encoding="utf-8")).get("module") == module
+          ]
+          if len(matches) != 1:
+              raise SystemExit(f"Expected one artifact for {module}; found {len(matches)}")
+          artifact = matches[0].parent
+          if not list(artifact.glob("outputs/apk/release/*.apk")) or not list(artifact.glob("outputs/jar/release/*.jar")):
+              raise SystemExit(f"Incomplete APK/JAR artifacts for {module}")
+          shutil.copytree(artifact, destination / artifact.relative_to(source), dirs_exist_ok=True)
+          print(f"REUSED_ARTIFACT_MODULE={module}")
+          PY
 
       - name: Checkout main branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -169,8 +283,9 @@ jobs:
           GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
           cd repo
-          pip install protobuf
-          python -u ../main/.github/scripts/publish-repo.py "$DELETE" "$GITHUB_SHA"
+          python3 -m venv "$RUNNER_TEMP/nox-publish-venv"
+          "$RUNNER_TEMP/nox-publish-venv/bin/python" -m pip install --require-hashes --only-binary=:all: --requirement ../main/.github/scripts/requirements-publish.txt
+          "$RUNNER_TEMP/nox-publish-venv/bin/python" -u ../main/.github/scripts/publish-repo.py "$DELETE" "$GITHUB_SHA"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           git status
@@ -189,4 +304,3 @@ jobs:
             echo "IDEMPOTENCY_LIVE_CHECK=PASS"
             echo "No changes to commit"
           fi
-
