@@ -35,7 +35,6 @@ import org.junit.Test
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.addSingleton
 import java.lang.reflect.Proxy
-import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -543,113 +542,130 @@ class MangaLivreTest {
     }
 
     @Test
-    fun `eliminates 403 probe and Turnstile wait on subsequent chapters when per-chapter Turnstile is required`() = runBlocking {
+    fun `keeps cached protected edge pages valid mid-chapter and refreshes only on 404 without extra Turnstile`() = runBlocking {
+        val totalPages = 4
         val turnstileCalls = AtomicInteger(0)
-        val accessLog = Collections.synchronizedList(mutableListOf<AccessAttempt>())
+        val accessCalls = AtomicInteger(0)
+        val handleCalls = AtomicInteger(0)
+        val failFirstEdgeImage = AtomicBoolean(true)
+        var verified = false
 
-        val client = createMockClient { request ->
-            val path = request.url.encodedPath
-            when {
-                path == "/api/reader/chapter/access" -> {
-                    val bodyStr = request.bodyString()
-                    val chapterId = Regex(""""chapterId":"([^"]+)"""").find(bodyStr)?.groupValues?.get(1) ?: ""
-                    val token = Regex(""""turnstileToken":"([^"]+)"""").find(bodyStr)?.groupValues?.get(1)
-                    if (token == null || token.startsWith("stale-")) {
-                        accessLog += AccessAttempt(chapterId, hadToken = token != null, token = token, code = 403)
-                        jsonResponse(
-                            request,
-                            403,
-                            """{"error":"Reader verification required","requiresTurnstile":true}""",
-                        )
-                    } else {
-                        accessLog += AccessAttempt(chapterId, hadToken = true, token = token, code = 200)
+        lateinit var coordinator: ReaderCoordinator
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain -> coordinator.interceptImage(chain) }
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val path = request.url.encodedPath
+                when {
+                    path == "/api/reader/chapter/access" -> {
+                        accessCalls.incrementAndGet()
+                        val bodyStr = request.bodyString()
+                        if (!verified && !bodyStr.contains("turnstile-ok")) {
+                            jsonResponse(
+                                request,
+                                403,
+                                """{"error":"Reader verification required","requiresTurnstile":true}""",
+                            )
+                        } else {
+                            verified = true
+                            jsonResponse(
+                                request,
+                                200,
+                                """
+                                {
+                                  "chapter": {"pageCount": $totalPages, "pages": []},
+                                  "protectedPages": true,
+                                  "firstHandle": {"token": "tok-1", "pageNumber": 1, "pageCount": $totalPages}
+                                }
+                                """.trimIndent(),
+                            )
+                        }
+                    }
+                    path.startsWith("/api/reader/p/") -> {
+                        val callNum = handleCalls.incrementAndGet()
+                        val pageNum = path.removePrefix("/api/reader/p/tok-").toInt()
+                        val version = if (callNum > totalPages) "v2" else "v1"
+                        val nextJson = if (pageNum < totalPages) {
+                            """{"token":"tok-${pageNum + 1}","pageNumber":${pageNum + 1},"pageCount":$totalPages}"""
+                        } else {
+                            "null"
+                        }
+                        val edgeToken = "edge_${pageNum}_${version}_012345678901234567890123456789012"
                         jsonResponse(
                             request,
                             200,
                             """
                             {
-                              "chapter": {
-                                "pageCount": 1,
-                                "pages": ["https://cdn.toonlivre.net/obras/obra-ts/$chapterId/001.webp"]
-                              },
-                              "protectedPages": false
+                              "imageUrl": "https://slightly-free-mayfly.edgecompute.app/reader/image/$edgeToken",
+                              "directImage": true,
+                              "protectedEdge": true,
+                              "pageNumber": $pageNum,
+                              "pageCount": $totalPages,
+                              "nextHandle": $nextJson
                             }
                             """.trimIndent(),
                         )
                     }
+                    path.startsWith("/reader/image/") -> {
+                        val edgeToken = request.url.pathSegments.last()
+                        if (edgeToken.startsWith("edge_2_v1") && failFirstEdgeImage.compareAndSet(true, false)) {
+                            jsonResponse(request, 404, """{"error":"Expired edge token"}""")
+                        } else {
+                            Response.Builder()
+                                .request(request)
+                                .protocol(Protocol.HTTP_1_1)
+                                .code(200)
+                                .message("OK")
+                                .body(byteArrayOf(7, 8, 9).toResponseBody("image/webp".toMediaType()))
+                                .build()
+                        }
+                    }
+                    else -> jsonResponse(request, 404, """{}""")
                 }
-                else -> jsonResponse(request, 404, """{}""")
             }
-        }
+            .build()
 
-        val coordinator = ReaderCoordinator(
+        coordinator = ReaderCoordinator(
             clientProvider = { client },
-            headersProvider = { Headers.headersOf("User-Agent", "Test/1.0") },
+            headersProvider = { Headers.headersOf("User-Agent", "TestBrowser/1.0") },
             baseUrlProvider = { "https://toonlivre.net" },
             turnstileSolver = {
-                val n = turnstileCalls.incrementAndGet()
-                delay(10L)
-                when (n) {
-                    1 -> "tok-1"
-                    2 -> "tok-2"
-                    3 -> "tok-3"
-                    4 -> "stale-tok-4"
-                    else -> "fresh-tok-$n"
-                }
+                turnstileCalls.incrementAndGet()
+                "turnstile-ok"
             },
             transientRetryBaseDelayMs = 1L,
-            enableBackgroundTasks = true,
+            enableBackgroundTasks = false,
             callExecutor = syncExecutor,
         )
 
-        // Chapter 1: UNKNOWN -> probes 403, solves tok-1, transitions to PROBING_SESSION, prewarms tok-2.
-        val ch1 = coordinator.getPageList("obra-ts", "cap-1", "https://toonlivre.net/obra-ts/1", null)
-        assertEquals(1, ch1.size)
+        val pages = coordinator.getPageList("obra-edge", "cap-1", "https://toonlivre.net/obra-edge/1", null)
+        assertEquals(totalPages, pages.size)
+        assertEquals(1, turnstileCalls.get())
+        assertEquals(2, accessCalls.get())
 
-        // Wait for background prewarm of tok-2 before opening Chapter 2.
-        withTimeout(2_000L) {
-            while (turnstileCalls.get() < 2) delay(10L)
+        val p2Url = coordinator.getImageUrl(pages[1].url)
+        val p3Url = coordinator.getImageUrl(pages[2].url)
+        val p4Url = coordinator.getImageUrl(pages[3].url)
+        assertTrue(p2Url.contains("edge_2_v1"))
+        assertTrue(p3Url.contains("edge_3_v1"))
+        assertTrue(p4Url.contains("edge_4_v1"))
+
+        // Revisiting an earlier page or re-opening the chapter must reuse cached session/URLs without extra access or Turnstile.
+        assertEquals(p2Url, coordinator.getImageUrl(pages[1].url))
+        val reusedPages = coordinator.getPageList("obra-edge", "cap-1", "https://toonlivre.net/obra-edge/1", null)
+        assertEquals(p2Url, reusedPages[1].imageUrl)
+        assertEquals(1, turnstileCalls.get())
+        assertEquals(2, accessCalls.get())
+        assertEquals(totalPages, handleCalls.get())
+
+        // If the edge token actually returns 404, interceptImage refreshes it transparently using the active session.
+        val imageReq = coordinator.buildImageRequest(p2Url, Headers.headersOf(), "https://toonlivre.net")
+        client.newCall(imageReq).execute().use { resp ->
+            assertEquals(200, resp.code)
+            assertArrayEquals(byteArrayOf(7, 8, 9), resp.body.bytes())
         }
-
-        // Chapter 2: PROBING_SESSION -> probes once (403), detects per-chapter requirement, uses prewarmed tok-2, prewarms tok-3.
-        val ch2 = coordinator.getPageList("obra-ts", "cap-2", "https://toonlivre.net/obra-ts/2", null)
-        assertEquals(1, ch2.size)
-
-        withTimeout(2_000L) {
-            while (turnstileCalls.get() < 3) delay(10L)
-        }
-        val solvesBeforeCh3 = turnstileCalls.get()
-
-        // Chapter 3: PER_CHAPTER_TURNSTILE -> skips 403 probe completely and uses prewarmed tok-3 on first request.
-        val ch3 = coordinator.getPageList("obra-ts", "cap-3", "https://toonlivre.net/obra-ts/3", null)
-        assertEquals(1, ch3.size)
-        assertEquals("https://cdn.toonlivre.net/obras/obra-ts/cap-3/001.webp", ch3[0].imageUrl)
-
-        val ch3Attempts = accessLog.filter { it.chapterId == "cap-3" }
-        assertEquals(1, ch3Attempts.size)
-        assertEquals(200, ch3Attempts[0].code)
-        assertTrue(ch3Attempts[0].hadToken)
-        assertEquals("tok-3", ch3Attempts[0].token)
-        assertTrue(solvesBeforeCh3 == 3)
-
-        // Chapter 4: prewarmed stale-tok-4 gets 403 -> automatically falls back to live fresh-tok-5 and succeeds.
-        val ch4 = coordinator.getPageList("obra-ts", "cap-4", "https://toonlivre.net/obra-ts/4", null)
-        assertEquals("https://cdn.toonlivre.net/obras/obra-ts/cap-4/001.webp", ch4[0].imageUrl)
-
-        val ch4Attempts = accessLog.filter { it.chapterId == "cap-4" }
-        assertEquals(2, ch4Attempts.size)
-        assertEquals(403, ch4Attempts[0].code)
-        assertEquals("stale-tok-4", ch4Attempts[0].token)
-        assertEquals(200, ch4Attempts[1].code)
-        assertEquals("fresh-tok-5", ch4Attempts[1].token)
+        assertEquals(1, turnstileCalls.get())
     }
-
-    private class AccessAttempt(
-        val chapterId: String,
-        val hadToken: Boolean,
-        val token: String?,
-        val code: Int,
-    )
 
     private fun fakeManga(): SManga = createPropertyBagProxy(SManga::class.java)
 
