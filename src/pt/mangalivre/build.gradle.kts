@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "ToonLivre"
-    versionCode = 95
+    versionCode = 96
     contentWarning = ContentWarning.SAFE
     libVersion = "1.6"
 

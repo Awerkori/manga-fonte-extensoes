@@ -31,15 +31,12 @@ import keiyoushi.utils.toJsonRequestBody
 import keiyoushi.utils.toJsonString
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -210,9 +207,6 @@ abstract class MangaLivre :
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        if (fetchDetails) {
-            readerCoordinator.prewarmTurnstileIfNeeded("$baseUrl/")
-        }
         val dto = fetchMangaDto(manga.url.trim('/'))
         return SMangaUpdate(
             manga = dto.toSManga(useAlternativeTitle),
@@ -417,15 +411,6 @@ internal class ReaderCoordinator(
     private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val verificationMutex = Mutex()
     private val verificationGeneration = AtomicInteger(0)
-    private val turnstileStateLock = Any()
-
-    @Volatile
-    private var verificationMode = VerificationMode.UNKNOWN
-
-    private var cachedTurnstile: PrewarmedTurnstile? = null
-    private var inFlightTurnstile: Deferred<String>? = null
-    private var turnstilePrewarmSeq = 0L
-    private var inFlightPrewarmId = 0L
 
     private val chapterSessions = Collections.synchronizedMap(
         object : LinkedHashMap<String, ChapterSession>(MAX_CHAPTER_SESSIONS, 0.75f, true) {
@@ -439,90 +424,12 @@ internal class ReaderCoordinator(
         File(root, "toonlivre_pages").apply { mkdirs() }
     }
 
-    internal fun isPageResolved(mangaId: String, chapterId: String, pageNumber: Int): Boolean = chapterSessions["$mangaId/$chapterId"]?.resolvedPages?.get(pageNumber)?.isFresh() == true
-
-    fun prewarmTurnstileIfNeeded(url: String) {
-        if (!enableBackgroundTasks || verificationMode == VerificationMode.SESSION_ACTIVE || csrfToken() != null) {
-            return
-        }
-        synchronized(turnstileStateLock) {
-            if (cachedTurnstile?.isFresh() == true || inFlightTurnstile?.isActive == true) {
-                return
-            }
-            cachedTurnstile = null
-            val attemptId = ++turnstilePrewarmSeq
-            inFlightPrewarmId = attemptId
-            inFlightTurnstile = backgroundScope.async {
-                try {
-                    val token = turnstileSolver(url)
-                    synchronized(turnstileStateLock) {
-                        if (inFlightPrewarmId == attemptId) {
-                            cachedTurnstile = PrewarmedTurnstile(token, System.currentTimeMillis())
-                        }
-                    }
-                    token
-                } finally {
-                    synchronized(turnstileStateLock) {
-                        if (inFlightPrewarmId == attemptId) {
-                            inFlightTurnstile = null
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private fun cancelInFlightTurnstile() {
-        val deferred = synchronized(turnstileStateLock) {
-            turnstilePrewarmSeq++
-            inFlightPrewarmId = 0L
-            cachedTurnstile = null
-            inFlightTurnstile.also { inFlightTurnstile = null }
-        }
-        deferred?.cancel()
-    }
+    internal fun isPageResolved(mangaId: String, chapterId: String, pageNumber: Int): Boolean = chapterSessions["$mangaId/$chapterId"]?.resolvedPages?.containsKey(pageNumber) == true
 
     private fun csrfToken(): String? = client.cookieJar.loadForRequest(baseUrl.toHttpUrl())
         .firstOrNull { it.name == "csrf_token" }
         ?.value
         ?.takeIf(String::isNotEmpty)
-
-    private suspend fun obtainTurnstileToken(
-        readerUrl: String,
-        allowCached: Boolean,
-    ): Pair<String, Boolean> {
-        if (allowCached) {
-            val (cached, pending) = synchronized(turnstileStateLock) {
-                val fresh = cachedTurnstile?.takeIf { it.isFresh() }
-                if (fresh != null) {
-                    cachedTurnstile = null
-                    fresh.token to null
-                } else {
-                    cachedTurnstile = null
-                    null to inFlightTurnstile
-                }
-            }
-            if (cached != null) {
-                return cached to true
-            }
-            if (pending != null) {
-                try {
-                    val token = pending.await()
-                    synchronized(turnstileStateLock) {
-                        if (cachedTurnstile?.token == token) {
-                            cachedTurnstile = null
-                        }
-                    }
-                    return token to true
-                } catch (e: CancellationException) {
-                    currentCoroutineContext().ensureActive()
-                } catch (_: Exception) {
-                    // Fall back to a fresh foreground solve if background pre-warming failed.
-                }
-            }
-        }
-        return turnstileSolver(readerUrl) to false
-    }
 
     suspend fun getPageList(
         mangaId: String,
@@ -594,7 +501,6 @@ internal class ReaderCoordinator(
         val token = PageTokenDto(m = mangaId, c = chapterId, p = pageNumber, t = session.totalPages)
         val pageUrl = "$readerUrl#$PAGE_FRAGMENT_PREFIX${token.toJsonString()}"
         val cachedImageUrl = session.resolvedPages[pageNumber]
-            ?.takeIf { it.isFresh() }
             ?.let { formatResolvedImageUrl(it, token, readerUrl) }
         Page(
             index = pageNumber - 1,
@@ -682,7 +588,7 @@ internal class ReaderCoordinator(
                 } else {
                     coroutineScope {
                         (fromPage..session.prefetchTargetPage.get())
-                            .filter { page -> session.resolvedPages[page]?.isFresh() != true }
+                            .filter { page -> !session.resolvedPages.containsKey(page) }
                             .map { page ->
                                 async {
                                     try {
@@ -845,7 +751,7 @@ internal class ReaderCoordinator(
         }
 
         if (!forceRefresh) {
-            session.resolvedPages[token.p]?.takeIf { it.isFresh() }?.let { return it }
+            session.resolvedPages[token.p]?.let { return it }
         } else {
             session.resolvedPages.remove(token.p)
         }
@@ -858,7 +764,7 @@ internal class ReaderCoordinator(
                 }
             }
             if (!forceRefresh) {
-                session.resolvedPages[token.p]?.takeIf { it.isFresh() }?.let { return it }
+                session.resolvedPages[token.p]?.let { return it }
             }
         }
 
@@ -876,7 +782,7 @@ internal class ReaderCoordinator(
         forceRefresh: Boolean,
     ): ResolvedPage = session.mutex.withLock {
         if (!forceRefresh) {
-            session.resolvedPages[targetPage]?.takeIf { it.isFresh() }?.let { return@withLock it }
+            session.resolvedPages[targetPage]?.let { return@withLock it }
         } else {
             session.resolvedPages.remove(targetPage)
         }
@@ -887,7 +793,7 @@ internal class ReaderCoordinator(
                 val freshAccess = requestChapterAccess(session.mangaId, session.chapterId, readerUrl, forceVerify = false)
                 session.applyAccess(freshAccess, session.totalPages)
                 if (!session.protectedPages) {
-                    session.resolvedPages[targetPage]?.takeIf { it.isFresh() }?.let { return@withLock it }
+                    session.resolvedPages[targetPage]?.let { return@withLock it }
                     return@withLock resolveGrantPageUnlocked(session, targetPage, readerUrl)
                 }
                 current = session.nextHandle ?: throw IOException("Handle de página protegida ausente.")
@@ -925,7 +831,7 @@ internal class ReaderCoordinator(
                 }
             }
 
-            session.resolvedPages[targetPage]?.takeIf { it.isFresh() }?.let { return@withLock it }
+            session.resolvedPages[targetPage]?.let { return@withLock it }
             if (!expiredDuringLoop && attempt == 0) {
                 session.nextHandle = null
             }
@@ -990,7 +896,6 @@ internal class ReaderCoordinator(
                     page = ResolvedPage(
                         imageUrl = rawUrl,
                         protectedEdge = isProtectedEdge,
-                        resolvedAt = System.currentTimeMillis(),
                     ),
                     nextHandle = nextHandle,
                 )
@@ -1024,7 +929,6 @@ internal class ReaderCoordinator(
                     page = ResolvedPage(
                         imageUrl = cachedUrl,
                         protectedEdge = false,
-                        resolvedAt = System.currentTimeMillis(),
                     ),
                     nextHandle = nextHandle,
                 )
@@ -1101,7 +1005,7 @@ internal class ReaderCoordinator(
                         if (session.protectedPages) {
                             return resolveProtectedSequencePage(session, targetPage, readerUrl, forceRefresh = false)
                         }
-                        session.resolvedPages[targetPage]?.takeIf { it.isFresh() }?.let { return it }
+                        session.resolvedPages[targetPage]?.let { return it }
                         grant = session.grant ?: throw IOException("Token de acesso ao capítulo ausente.")
                     }
                 }
@@ -1134,7 +1038,6 @@ internal class ReaderCoordinator(
                         ResolvedPage(
                             imageUrl = imageUrl,
                             protectedEdge = isProtectedEdge,
-                            resolvedAt = System.currentTimeMillis(),
                         ).also { session.resolvedPages[targetPage] = it }
                     }
                     response.code == 404 && attempt == 0 -> {
@@ -1198,7 +1101,6 @@ internal class ReaderCoordinator(
             ResolvedPage(
                 imageUrl = imageUrl,
                 protectedEdge = isProtectedEdge,
-                resolvedAt = System.currentTimeMillis(),
             ).also { session.resolvedPages[targetPage] = it }
         }
     }
@@ -1210,98 +1112,21 @@ internal class ReaderCoordinator(
         forceVerify: Boolean,
     ): ReaderAccessResponseDto {
         val generationBefore = verificationGeneration.get()
-        if (!forceVerify && verificationMode == VerificationMode.PER_CHAPTER_TURNSTILE) {
-            return verificationMutex.withLock {
-                val verified = postVerifiedAccessUnlocked(
-                    mangaId = mangaId,
-                    chapterId = chapterId,
-                    readerUrl = readerUrl,
-                    allowCachedToken = true,
-                )
-                verificationGeneration.incrementAndGet()
-                runCatching { CookieManager.getInstance().flush() }
-                prewarmTurnstileIfNeeded(readerUrl)
-                verified
-            }
-        }
-
         if (!forceVerify) {
-            if (verificationMode == VerificationMode.UNKNOWN && csrfToken() == null) {
-                prewarmTurnstileIfNeeded(readerUrl)
-            }
-            val unverified = postAccessRequest(
-                mangaId = mangaId,
-                chapterId = chapterId,
-                readerUrl = readerUrl,
-                turnstileToken = null,
-                allowTurnstileRetry = true,
-            )
-            if (unverified != null) {
-                verificationMode = VerificationMode.SESSION_ACTIVE
-                cancelInFlightTurnstile()
-                return unverified
-            }
-            if (verificationMode == VerificationMode.PROBING_SESSION) {
-                verificationMode = VerificationMode.PER_CHAPTER_TURNSTILE
-            }
+            postAccessRequest(mangaId, chapterId, readerUrl, turnstileToken = null)?.let { return it }
         }
 
         return verificationMutex.withLock {
-            if (!forceVerify &&
-                verificationGeneration.get() != generationBefore &&
-                verificationMode != VerificationMode.PER_CHAPTER_TURNSTILE
-            ) {
-                postAccessRequest(
-                    mangaId = mangaId,
-                    chapterId = chapterId,
-                    readerUrl = readerUrl,
-                    turnstileToken = null,
-                    allowTurnstileRetry = true,
-                )?.let {
-                    verificationMode = VerificationMode.SESSION_ACTIVE
-                    cancelInFlightTurnstile()
-                    return@withLock it
-                }
+            if (!forceVerify && verificationGeneration.get() != generationBefore) {
+                postAccessRequest(mangaId, chapterId, readerUrl, turnstileToken = null)?.let { return@withLock it }
             }
 
-            val verified = postVerifiedAccessUnlocked(
-                mangaId = mangaId,
-                chapterId = chapterId,
-                readerUrl = readerUrl,
-                allowCachedToken = !forceVerify,
-            )
-            if (verificationMode == VerificationMode.UNKNOWN || verificationMode == VerificationMode.SESSION_ACTIVE) {
-                verificationMode = VerificationMode.PROBING_SESSION
-            }
+            val token = turnstileSolver(readerUrl)
+            val verified = postAccessRequest(mangaId, chapterId, readerUrl, turnstileToken = token)
+                ?: throw IOException("Não foi possível validar o acesso ao leitor. Tente novamente.")
             verificationGeneration.incrementAndGet()
             runCatching { CookieManager.getInstance().flush() }
-            prewarmTurnstileIfNeeded(readerUrl)
             verified
-        }
-    }
-
-    private suspend fun postVerifiedAccessUnlocked(
-        mangaId: String,
-        chapterId: String,
-        readerUrl: String,
-        allowCachedToken: Boolean,
-    ): ReaderAccessResponseDto {
-        val (token, fromPrewarm) = obtainTurnstileToken(readerUrl, allowCached = allowCachedToken)
-        return postAccessRequest(
-            mangaId = mangaId,
-            chapterId = chapterId,
-            readerUrl = readerUrl,
-            turnstileToken = token,
-            allowTurnstileRetry = fromPrewarm,
-        ) ?: run {
-            val (freshToken, _) = obtainTurnstileToken(readerUrl, allowCached = false)
-            postAccessRequest(
-                mangaId = mangaId,
-                chapterId = chapterId,
-                readerUrl = readerUrl,
-                turnstileToken = freshToken,
-                allowTurnstileRetry = false,
-            ) ?: throw IOException("Não foi possível validar o acesso ao leitor. Tente novamente.")
         }
     }
 
@@ -1310,7 +1135,6 @@ internal class ReaderCoordinator(
         chapterId: String,
         readerUrl: String,
         turnstileToken: String?,
-        allowTurnstileRetry: Boolean,
     ): ReaderAccessResponseDto? {
         val csrf = csrfToken()
         val reqHeaders = headers.newBuilder().apply {
@@ -1338,8 +1162,7 @@ internal class ReaderCoordinator(
             }
             if (response.code == 403) {
                 val error = runCatching { response.parseAs<ReaderAccessErrorDto>() }.getOrNull()
-                if ((turnstileToken == null || allowTurnstileRetry) &&
-                    error?.interactivePending != true &&
+                if (turnstileToken == null &&
                     (error?.requiresTurnstile == true || error?.error == MangaLivre.READER_VERIFICATION_REQUIRED)
                 ) {
                     return@use null
@@ -1416,7 +1239,6 @@ internal class ReaderCoordinator(
                     resolvedPages[index + 1] = ResolvedPage(
                         imageUrl = validUrl,
                         protectedEdge = validUrl.toHttpUrl().isProtectedEdgeImage(),
-                        resolvedAt = System.currentTimeMillis(),
                     )
                 }
             }
@@ -1438,27 +1260,10 @@ internal class ReaderCoordinator(
         }
     }
 
-    private enum class VerificationMode {
-        UNKNOWN,
-        PROBING_SESSION,
-        SESSION_ACTIVE,
-        PER_CHAPTER_TURNSTILE,
-    }
-
-    private class PrewarmedTurnstile(
-        val token: String,
-        private val createdAt: Long,
-    ) {
-        fun isFresh(now: Long = System.currentTimeMillis()): Boolean = now - createdAt < TURNSTILE_TOKEN_TTL_MS
-    }
-
     internal class ResolvedPage(
         val imageUrl: String,
         val protectedEdge: Boolean,
-        val resolvedAt: Long,
-    ) {
-        fun isFresh(now: Long = System.currentTimeMillis()): Boolean = !protectedEdge || now - resolvedAt < PROTECTED_URL_TTL_MS
-    }
+    )
 
     private sealed interface StepOutcome {
         class Success(
@@ -1478,9 +1283,7 @@ internal class ReaderCoordinator(
         private const val MAX_CHAPTER_SESSIONS = 6
         private const val MAX_TRANSIENT_RETRIES = 3
         private const val MAX_RETRY_DELAY_MS = 3_000L
-        private const val SESSION_REUSE_TTL_MS = 45_000L
-        private const val PROTECTED_URL_TTL_MS = 45_000L
-        private const val TURNSTILE_TOKEN_TTL_MS = 210_000L
+        private const val SESSION_REUSE_TTL_MS = 600_000L
         private const val INITIAL_PREFETCH_PAGES = 5
         private const val SLIDING_PREFETCH_WINDOW = 3
         private const val BINARY_CACHE_TTL_MS = 300_000L
