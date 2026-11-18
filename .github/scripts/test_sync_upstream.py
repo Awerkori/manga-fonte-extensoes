@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -2616,6 +2617,72 @@ class VersionCatalogAndLintProtectionTest(unittest.TestCase):
             'val y = project(":core")\n',
         )
         self.assertEqual(sync_upstream.validate_local_project_dependencies(), [])
+
+    def test_dynamic_new_top_level_module_discovery_and_reconciliation(self):
+        """New upstream top-level module (e.g. extensions-lib) is discovered and reconciled."""
+        self._write(
+            "gradle/libs.versions.toml",
+            '[versions]\nandroid-gradle = "9.4.1"\n[libraries]\n',
+        )
+        self._write("settings.gradle.kts", 'include(":core")\n')
+        self._write("core/build.gradle.kts", "plugins {}\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "nox base")
+
+        # Present on disk but missing from settings.gradle.kts must be flagged
+        self._write("extensions-lib/build.gradle.kts", "plugins {}\n")
+        settings_errs = sync_upstream.validate_settings_modules()
+        self.assertTrue(any(":extensions-lib" in err for err in settings_errs))
+
+        # Remove uncommitted dir and create upstream branch introducing :extensions-lib cleanly
+        shutil.rmtree(self.repo / "extensions-lib")
+        self.git("checkout", "-qb", "upstream")
+        self._write(
+            "gradle/libs.versions.toml",
+            '[versions]\nandroid-gradle = "9.4.1"\n[libraries]\nfoo-bar = "com.example:foo:1.0"\n',
+        )
+        self._write("settings.gradle.kts", 'include(":core")\ninclude(":extensions-lib")\n')
+        self._write("extensions-lib/build.gradle.kts", "dependencies {\n    implementation(libs.foo.bar)\n}\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "upstream adds extensions-lib")
+        self.git("checkout", "-q", "main")
+
+        with patch.object(sync_upstream, "validate_infra_builds"):
+            sync_upstream.apply_units(
+                "upstream",
+                ["extensions-lib/build.gradle.kts", "settings.gradle.kts"],
+                set(),
+                [],
+                [],
+                set(),
+                {},
+            )
+
+        self.assertEqual(sync_upstream.validate_settings_modules(), [])
+        self.assertEqual(sync_upstream.validate_version_catalog_references(), [])
+        self.assertTrue(sync_upstream.is_infra_path("extensions-lib/build.gradle.kts"))
+        self.assertIn('include(":extensions-lib")', Path("settings.gradle.kts").read_text())
+
+    def test_code_sha_deduplication_survives_metadata_commit(self):
+        """Persisted signature keyed by code_sha deduplicates even after metadata commit."""
+        self._write("src/all/sample/build.gradle.kts", 'libVersion = "1.6"\nversionCode = 1\n')
+        self.git("add", ".")
+        self.git("commit", "-m", "code commit")
+        code_sha = sync_upstream.get_code_sha("HEAD")
+
+        sync_upstream.write_failure_signatures({
+            "local_head": "old_head",
+            "code_sha": code_sha,
+            "upstream_head": "upstream_sha_1",
+            "state": "BLOCKED_STRUCTURAL",
+            "cause": "Deterministic breakage",
+            "skip_count": 0,
+        })
+        self.git("add", ".")
+        self.git("commit", "-m", "[skip ci] chore: record deterministic sync failure block")
+        new_head = self.git("rev-parse", "HEAD")
+        self.assertNotEqual(new_head, "old_head")
+        self.assertEqual(sync_upstream.get_code_sha("HEAD"), code_sha)
 
 
 if __name__ == "__main__":
