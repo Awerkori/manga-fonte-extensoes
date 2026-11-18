@@ -12,8 +12,17 @@ MULTISRC_LIB_REGEX = re.compile(r"^lib-multisrc/(?P<multisrc>\w+)")
 LIB_REGEX = re.compile(r"^lib/(?P<lib>\w+)")
 MODULE_REGEX = re.compile(r"^:src:(?P<lang>\w+):(?P<extension>\w+)$")
 CORE_FILES_REGEX = re.compile(
-    r"^(common/|compiler/|core/|gradle/|build\.gradle\.kts|gradle\.properties|settings\.gradle\.kts)"
+    r"^(common/|compiler/|core/|gradle/|lint-rules/|build\.gradle\.kts|gradle\.properties|settings\.gradle\.kts)"
 )
+
+
+def is_top_level_gradle_module_file(posix_path: str) -> bool:
+    """Detect changes inside dynamic top-level Gradle module directories (e.g., extensions-lib/)."""
+    top = posix_path.split("/", 1)[0]
+    if not top or top in {"src", "lib", "lib-multisrc", "gradle", ".github", "build"}:
+        return False
+    mod_dir = Path(top)
+    return (mod_dir / "build.gradle.kts").is_file() or (mod_dir / "build.gradle").is_file()
 
 def run_command(command: str) -> str:
     result = subprocess.run(command, capture_output=True, text=True, shell=True)
@@ -135,7 +144,7 @@ def get_module_list(ref: str) -> tuple[list[str], list[str]]:
     core_files_changed = False
 
     for file in map(lambda x: Path(x).as_posix(), changed_files):
-        if CORE_FILES_REGEX.search(file):
+        if CORE_FILES_REGEX.search(file) or is_top_level_gradle_module_file(file):
             core_files_changed = True
 
         elif match := EXTENSION_REGEX.search(file):

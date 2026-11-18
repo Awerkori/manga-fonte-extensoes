@@ -181,6 +181,7 @@ class PublishConditionTest(unittest.TestCase):
 class GenerateBuildMatricesTest(unittest.TestCase):
     def test_regexes(self):
         self.assertTrue(CORE_FILES_REGEX.search("gradle/build-logic/src/main/kotlin/Constant.kt"))
+        self.assertTrue(CORE_FILES_REGEX.search("lint-rules/src/main/kotlin/Rule.kt"))
         self.assertTrue(CORE_FILES_REGEX.search("settings.gradle.kts"))
         self.assertTrue(CORE_FILES_REGEX.search("build.gradle.kts"))
         self.assertFalse(CORE_FILES_REGEX.search("src/pt/sample/build.gradle.kts"))

@@ -639,7 +639,7 @@ class ApplyUnitsResult(list):
 
 
 _GRADLE_FAILED_TASK_RE = re.compile(
-    r"(?:> Task :((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler|lint-rules):([a-zA-Z0-9]+)\s+FAILED|Execution failed for task ':((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler|lint-rules):([a-zA-Z0-9]+)')",
+    r"(?:> Task :((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|[a-zA-Z0-9_-]+):([a-zA-Z0-9]+)\s+FAILED|Execution failed for task ':((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|[a-zA-Z0-9_-]+):([a-zA-Z0-9]+)')",
 )
 _KOTLIN_ERROR_RE = re.compile(r"e:\s+file:///(.+?):(\d+):(\d+)\s*(.+)")
 
@@ -1135,18 +1135,77 @@ def validate_multisrc_compatibility() -> list[str]:
     return errors
 
 
+def discover_local_top_level_modules(root: Path = Path(".")) -> list[Path]:
+    """Discover all top-level Gradle module directories containing build.gradle(.kts)."""
+    modules: list[Path] = []
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir() or entry.name in {".git", ".gradle", "build", "gradle", "src", "lib", "lib-multisrc"}:
+            continue
+        if (entry / "build.gradle.kts").is_file() or (entry / "build.gradle").is_file():
+            modules.append(entry)
+    return modules
+
+
+def discover_upstream_top_level_modules(upstream_ref: str | None) -> set[str]:
+    """Discover top-level Gradle module directories present in upstream_ref."""
+    if not upstream_ref:
+        return set()
+    res = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", upstream_ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res.returncode != 0:
+        return set()
+    modules: set[str] = set()
+    for line in res.stdout.splitlines():
+        parts = line.split("/")
+        if len(parts) == 2 and parts[1] in {"build.gradle.kts", "build.gradle"}:
+            top = parts[0]
+            if top not in {"gradle", "src", "lib", "lib-multisrc", "build"}:
+                modules.add(top)
+    return modules
+
+
+def get_code_sha(ref: str = "HEAD") -> str:
+    """Return latest commit SHA affecting repository code (excluding sync metadata files)."""
+    res = subprocess.run(
+        [
+            "git",
+            "log",
+            "-n",
+            "1",
+            "--format=%H",
+            ref,
+            "--",
+            ".",
+            f":!{FAILURE_SIGNATURES_FILE.as_posix()}",
+            f":!{DEFERRED_MIGRATIONS_FILE.as_posix()}",
+            f":!{DEFERRED_INCOMPATIBILITIES_FILE.as_posix()}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    sha = (getattr(res, "stdout", "") or "").strip() if res.returncode == 0 else ""
+    if sha:
+        return sha
+    return git("rev-parse", ref).strip()
+
+
 def validate_local_project_dependencies() -> list[str]:
     """Return Gradle project dependencies whose local module no longer exists."""
     errors = []
-    roots = [
-        Path("core"),
-        Path("compiler"),
-        Path("lint-rules"),
+    roots: list[Path] = [
+        *discover_local_top_level_modules(),
         Path("gradle/build-logic/src"),
         Path("lib"),
         Path("lib-multisrc"),
         Path("src"),
     ]
+    # Deduplicate while preserving order
+    roots = list(dict.fromkeys(roots))
     build_files: list[Path] = []
     root_build = Path("build.gradle.kts")
     if root_build.is_file():
@@ -1216,10 +1275,16 @@ _CATALOG_IGNORED_PREFIXES = {
 }
 
 
-def is_infra_path(path: str) -> bool:
-    """Return True if path belongs to shared build, core, compiler, or lint infrastructure."""
+def is_infra_path(path: str, upstream_ref: str | None = None) -> bool:
+    """Return True if path belongs to shared build, core, compiler, lint, or any top-level Gradle module."""
     normalized = path.strip("/")
-    return normalized in INFRA_EXACT_PATHS or normalized.startswith(INFRA_PREFIXES)
+    if normalized in INFRA_EXACT_PATHS or normalized.startswith(INFRA_PREFIXES):
+        return True
+    top = normalized.split("/", 1)[0]
+    local_tops = {m.name for m in discover_local_top_level_modules()}
+    if top in local_tops or top in discover_upstream_top_level_modules(upstream_ref):
+        return True
+    return False
 
 
 def _strip_comments_preserving_newlines(text: str, strip_strings: bool = False) -> str:
@@ -1428,19 +1493,86 @@ def reconcile_version_catalog(upstream_ref: str, *, apply: bool = True) -> bool:
     return True
 
 
+def reconcile_settings_modules(upstream_ref: str, *, apply: bool = True) -> bool:
+    """Safely integrate new top-level upstream module includes into settings.gradle.kts."""
+    settings_file = Path("settings.gradle.kts")
+    if not settings_file.is_file():
+        return False
+    upstream_text = _read_file_text(upstream_ref, "settings.gradle.kts")
+    if not upstream_text:
+        return False
+
+    local_text = settings_file.read_text(encoding="utf-8")
+    local_cleaned = _strip_comments_preserving_newlines(local_text)
+    local_includes = {m.group(1) for m in _SETTINGS_INCLUDE_RE.finditer(local_cleaned)}
+
+    upstream_cleaned = _strip_comments_preserving_newlines(upstream_text)
+    upstream_includes = [m.group(1) for m in _SETTINGS_INCLUDE_RE.finditer(upstream_cleaned)]
+    upstream_top_mods = discover_upstream_top_level_modules(upstream_ref)
+
+    missing: list[str] = []
+    for mod_ref in upstream_includes:
+        if mod_ref in local_includes:
+            continue
+        mod_dir = Path(*mod_ref.removeprefix(":").split(":"))
+        top_name = mod_ref.removeprefix(":").split(":", 1)[0]
+        if (
+            (mod_dir / "build.gradle.kts").is_file()
+            or (mod_dir / "build.gradle").is_file()
+            or top_name in upstream_top_mods
+        ):
+            missing.append(mod_ref)
+
+    for top_mod in sorted(discover_local_top_level_modules()):
+        mod_ref = f":{top_mod.name}"
+        if mod_ref not in local_includes and mod_ref not in missing:
+            missing.append(mod_ref)
+
+    if not missing:
+        return False
+
+    if not apply:
+        return True
+
+    lines = local_text.splitlines()
+    last_include_idx = -1
+    for i, line in enumerate(lines):
+        if _SETTINGS_INCLUDE_RE.search(line):
+            last_include_idx = i
+
+    insert_lines = [f'include("{m}")' for m in missing]
+    if last_include_idx >= 0:
+        new_lines = lines[: last_include_idx + 1] + insert_lines + lines[last_include_idx + 1 :]
+    else:
+        new_lines = lines + ["", *insert_lines]
+    updated = "\n".join(new_lines) + "\n"
+    settings_file.write_text(updated, encoding="utf-8")
+    print("Reconciled new module includes in settings.gradle.kts: " + ", ".join(missing))
+    return True
+
+
 def validate_settings_modules() -> list[str]:
-    """Ensure static include(...) modules declared in settings.gradle.kts exist on disk."""
+    """Ensure settings.gradle.kts includes match top-level Gradle modules on disk cleanly."""
     settings_file = Path("settings.gradle.kts")
     if not settings_file.is_file():
         return []
     errors: list[str] = []
     content = _strip_comments_preserving_newlines(settings_file.read_text(encoding="utf-8", errors="ignore"))
+    declared: set[str] = set()
     for match in _SETTINGS_INCLUDE_RE.finditer(content):
         mod_ref = match.group(1)
+        declared.add(mod_ref)
         mod_path = Path(*mod_ref.removeprefix(":").split(":"))
         if not ((mod_path / "build.gradle.kts").is_file() or (mod_path / "build.gradle").is_file()):
             line_number = content.count("\n", 0, match.start()) + 1
             errors.append(f"settings.gradle.kts:{line_number}: módulo incluído '{mod_ref}' não existe em {mod_path}")
+
+    for mod_dir in discover_local_top_level_modules():
+        expected_ref = f":{mod_dir.name}"
+        if expected_ref not in declared:
+            errors.append(
+                f"settings.gradle.kts: módulo '{expected_ref}' presente em {mod_dir}/ não está declarado em include(...)"
+            )
     return errors
 
 
@@ -1505,7 +1637,14 @@ def validate_version_catalog_references() -> list[str]:
     script_files: list[Path] = []
     if Path("build.gradle.kts").is_file():
         script_files.append(Path("build.gradle.kts"))
-    for root in (Path("core"), Path("compiler"), Path("lint-rules"), Path("lib"), Path("lib-multisrc"), Path("src"), Path("gradle/build-logic")):
+    scan_roots: list[Path] = [
+        *discover_local_top_level_modules(),
+        Path("lib"),
+        Path("lib-multisrc"),
+        Path("src"),
+        Path("gradle/build-logic"),
+    ]
+    for root in dict.fromkeys(scan_roots):
         if root.is_dir():
             script_files.extend(root.rglob("*.gradle.kts"))
             if root == Path("gradle/build-logic"):
@@ -1709,15 +1848,20 @@ suspend fun OkHttpClient.post(
 
 
 def validate_infra_builds() -> None:
-    """Verify shared infrastructure (:lint-rules, :core, lintRelease integration) builds cleanly."""
+    """Verify shared infrastructure (:lint-rules, :core, top-level modules, lintRelease integration) builds cleanly."""
     gradlew = Path("gradlew")
     if not gradlew.exists():
         return
     tasks: list[str] = []
-    if Path("lint-rules/build.gradle.kts").is_file():
-        tasks.append(":lint-rules:test")
-    if Path("core/build.gradle.kts").is_file():
-        tasks.append(":core:testDebugUnitTest")
+    for mod_dir in discover_local_top_level_modules():
+        if mod_dir.name == "lint-rules":
+            tasks.append(":lint-rules:test")
+        elif mod_dir.name == "core":
+            tasks.append(":core:testDebugUnitTest")
+        elif mod_dir.name == "compiler":
+            tasks.append(":compiler:compileKotlin")
+        else:
+            tasks.append(f":{mod_dir.name}:compileReleaseKotlin")
     if Path("src/pt/xxxyaoi/build.gradle.kts").is_file():
         tasks.append(":src:pt:xxxyaoi:lintRelease")
     if not tasks:
@@ -2558,6 +2702,10 @@ def _apply_units(
     if catalog_changed:
         git("add", "--", str(LIBS_CATALOG_FILE))
 
+    settings_changed = reconcile_settings_modules(upstream_ref, apply=True)
+    if settings_changed:
+        git("add", "--", "settings.gradle.kts")
+
     git("diff", "--check")
 
     dependency_errors = validate_local_project_dependencies()
@@ -2607,7 +2755,7 @@ def _apply_units(
         git("merge", "--abort", check=False)
         sys.exit(1)
 
-    infra_changed = catalog_changed or any(is_infra_path(unit) for unit in units)
+    infra_changed = catalog_changed or settings_changed or any(is_infra_path(unit, upstream_ref) for unit in units)
     if infra_changed:
         validate_infra_builds()
 
@@ -2650,6 +2798,10 @@ def _apply_units(
             f"  - {u}: {info['cause']} ({info['incompatibility_type']})"
             for u, info in newly_isolated.items()
         )
+
+    if FAILURE_SIGNATURES_FILE.exists():
+        FAILURE_SIGNATURES_FILE.unlink()
+        git("rm", "--ignore-unmatch", "--quiet", "--", str(FAILURE_SIGNATURES_FILE))
 
     if not has_staged_changes() and not merge_in_progress():
         print("No sync changes to commit")
@@ -2792,11 +2944,16 @@ def main() -> None:
 
     upstream_ref = f"{UPSTREAM_REMOTE}/{UPSTREAM_BRANCH}"
     upstream_head = git("rev-parse", upstream_ref).strip()
+    code_sha = get_code_sha("HEAD")
 
     signatures = load_failure_signatures()
+    same_local = (
+        signatures.get("local_head") == sync_head
+        or (bool(signatures.get("code_sha")) and signatures.get("code_sha") == code_sha)
+    )
     if (
         signatures
-        and signatures.get("local_head") == sync_head
+        and same_local
         and signatures.get("upstream_head") == upstream_head
     ):
         recorded_state = signatures.get("state", "BLOCKED_STRUCTURAL")
@@ -2807,7 +2964,7 @@ def main() -> None:
         print("DEDUPLICATED DETERMINISTIC FAILURE DETECTED")
         print(f"State: {recorded_state}")
         print(f"Cause: {signatures.get('cause')}")
-        print(f"Inputs unchanged (local={sync_head[:10]}, upstream={upstream_head[:10]}). Skip count: {skip_count}")
+        print(f"Inputs unchanged (local={code_sha[:10]}, upstream={upstream_head[:10]}). Skip count: {skip_count}")
         print("Skipping redundant full build to avoid CI failure loops.")
         print("==================================================")
         print_observability_footer(recorded_state, "SKIPPED", "SKIPPED")
@@ -2904,9 +3061,11 @@ def main() -> None:
             updated_units.append(unit)
 
     catalog_pending = reconcile_version_catalog(upstream_ref, apply=False)
+    settings_pending = reconcile_settings_modules(upstream_ref, apply=False)
     core_changed = (
-        any(is_infra_path(path) for _, paths in upstream_entries for path in paths)
+        any(is_infra_path(path, upstream_ref) for _, paths in upstream_entries for path in paths)
         or catalog_pending
+        or settings_pending
     )
     if core_changed:
         for pu in protected_units:
@@ -2925,6 +3084,7 @@ def main() -> None:
         and not load_deferred_incompatibilities()
         and not effective_diff
         and not catalog_pending
+        and not settings_pending
     )
 
     trigger = os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch")
@@ -2992,12 +3152,15 @@ def main() -> None:
         )
     except StructuralIncompatibilityError as error:
         print(f"Structural incompatibility: {error}", file=sys.stderr)
+        if merge_in_progress():
+            git("merge", "--abort", check=False)
         sig = compute_deterministic_signature(
-            local_head, upstream_head, "BLOCKED_STRUCTURAL", error.failed_units, str(error)
+            code_sha, upstream_head, "BLOCKED_STRUCTURAL", error.failed_units, str(error)
         )
         write_failure_signatures({
             "last_signature": sig,
             "local_head": local_head,
+            "code_sha": code_sha,
             "upstream_head": upstream_head,
             "state": "BLOCKED_STRUCTURAL",
             "failed_units": error.failed_units,
@@ -3005,8 +3168,16 @@ def main() -> None:
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             "skip_count": 0,
         })
-        if merge_in_progress():
-            git("merge", "--abort", check=False)
+        if args.push:
+            try:
+                ensure_main_unchanged(start_main)
+                git("add", "--", str(FAILURE_SIGNATURES_FILE))
+                if has_staged_changes():
+                    git("commit", "-m", "[skip ci] chore: record deterministic sync failure block")
+                    git("push", "origin", "HEAD:main")
+                    print(f"Persisted deterministic sync block in {FAILURE_SIGNATURES_FILE} (code={code_sha[:10]}).")
+            except Exception as exc:
+                print(f"Warning: could not persist deterministic failure signature remotely: {exc}", file=sys.stderr)
         print_observability_footer("BLOCKED_STRUCTURAL", "SKIPPED", "SKIPPED")
         sys.exit(1)
 
