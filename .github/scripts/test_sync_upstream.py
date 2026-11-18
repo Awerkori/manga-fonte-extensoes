@@ -2472,5 +2472,151 @@ class KeiyoushiSyncShieldRegressionTests(unittest.TestCase):
                     # Signature was bypassed because upstream_head differed!
 
 
+class VersionCatalogAndLintProtectionTest(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory(prefix="catalog-guard-test-")
+        self.repo = Path(self.tmpdir.name)
+        self.prev = Path.cwd()
+        os.chdir(self.repo)
+
+        def git(*args):
+            res = subprocess.run(["git", *args], cwd=self.repo, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"git {' '.join(args)} failed: {res.stderr}")
+            return res.stdout.strip()
+
+        self.git = git
+        self.git("init", "-b", "main")
+        self.git("config", "user.name", "Nox Guard")
+        self.git("config", "user.email", "guard@project-nox.test")
+
+    def tearDown(self):
+        os.chdir(self.prev)
+        self.tmpdir.cleanup()
+
+    def _write(self, rel_path: str, content: str) -> None:
+        p = self.repo / rel_path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+
+    def test_missing_lint_aliases_detected_and_blocks_apply_units(self):
+        """Missing libs.lint.* aliases imported from upstream must fail closed before commit."""
+        self._write(
+            "gradle/libs.versions.toml",
+            '[versions]\nandroid-gradle = "9.4.1"\njunit = "4.13.2"\n'
+            '[libraries]\njunit = { module = "junit:junit", version.ref = "junit" }\n',
+        )
+        self._write("settings.gradle.kts", 'include(":core")\n')
+        self._write("core/build.gradle.kts", "plugins {}\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "base")
+
+        self.git("checkout", "-qb", "upstream")
+        self._write("settings.gradle.kts", 'include(":core")\ninclude(":lint-rules")\n')
+        self._write(
+            "lint-rules/build.gradle.kts",
+            "dependencies {\n    compileOnly(libs.lint.api)\n    compileOnly(libs.lint.checks)\n    testImplementation(libs.lint.tests)\n}\n",
+        )
+        self.git("add", ".")
+        self.git("commit", "-m", "upstream adds lint-rules without catalog")
+        self.git("checkout", "-q", "main")
+
+        with self.assertRaises(sync_upstream.StructuralIncompatibilityError):
+            sync_upstream.apply_units(
+                "upstream",
+                ["lint-rules/build.gradle.kts", "settings.gradle.kts"],
+                set(),
+                [],
+                [],
+                set(),
+                {},
+            )
+
+        # Atomic rollback leaves main untouched and free of broken lint-rules/
+        self.assertFalse(Path("lint-rules/build.gradle.kts").exists())
+        self.assertFalse(Path(".git/MERGE_HEAD").exists())
+
+    def test_reconcile_adds_upstream_lint_aliases_while_preserving_nox_14_pins(self):
+        """Reconcile imports missing lint aliases paired to local AGP and keeps 1.4 deps."""
+        self._write(
+            "gradle/libs.versions.toml",
+            '[versions]\nandroid-gradle = "9.4.1"\njunit = "4.13.2"\n'
+            '[libraries]\njunit = { module = "junit:junit", version.ref = "junit" }\n'
+            'rxjava = { module = "io.reactivex:rxjava", version = "1.3.8" }\n'
+            'tachiyomi-lib-v14 = { module = "com.github.keiyoushi:extensions-lib", version = "18a8e26be2" }\n'
+            '[bundles]\ncommon = ["rxjava", "junit"]\n',
+        )
+        self._write("settings.gradle.kts", 'include(":core")\n')
+        self._write("core/build.gradle.kts", "plugins {}\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "nox base")
+
+        self.git("checkout", "-qb", "upstream")
+        self._write(
+            "gradle/libs.versions.toml",
+            '[versions]\nandroid-gradle = "9.5.1"\njunit = "4.13.2"\nlint = "32.5.1"\n'
+            '[libraries]\njunit = { module = "junit:junit", version.ref = "junit" }\n'
+            'lint-api = { module = "com.android.tools.lint:lint-api", version.ref = "lint" }\n'
+            'lint-checks = { module = "com.android.tools.lint:lint-checks", version.ref = "lint" }\n'
+            'lint-tests = { module = "com.android.tools.lint:lint-tests", version.ref = "lint" }\n'
+            '[bundles]\ncommon = ["junit"]\n',
+        )
+        self._write("settings.gradle.kts", 'include(":core")\ninclude(":lint-rules")\n')
+        self._write(
+            "lint-rules/build.gradle.kts",
+            "dependencies {\n    compileOnly(libs.lint.api)\n    compileOnly(libs.lint.checks)\n    testImplementation(libs.lint.tests)\n}\n",
+        )
+        self.git("add", ".")
+        self.git("commit", "-m", "upstream adds lint-rules with AGP 9.5.1 + lint 32.5.1")
+        self.git("checkout", "-q", "main")
+
+        with patch.object(sync_upstream, "validate_infra_builds") as infra_val:
+            sync_upstream.apply_units(
+                "upstream",
+                ["lint-rules/build.gradle.kts", "settings.gradle.kts"],
+                set(),
+                [],
+                [],
+                set(),
+                {},
+            )
+
+        infra_val.assert_called_once()
+        self.assertEqual(sync_upstream.validate_version_catalog_references(), [])
+        self.assertEqual(sync_upstream.validate_settings_modules(), [])
+        import tomllib
+        parsed = tomllib.loads(Path("gradle/libs.versions.toml").read_text())
+        self.assertEqual(parsed["versions"]["android-gradle"], "9.4.1")
+        self.assertEqual(parsed["versions"]["lint"], "32.4.1")
+        self.assertIn("lint-api", parsed["libraries"])
+        self.assertIn("lint-checks", parsed["libraries"])
+        self.assertIn("lint-tests", parsed["libraries"])
+        self.assertIn("rxjava", parsed["libraries"])
+        self.assertIn("tachiyomi-lib-v14", parsed["libraries"])
+        self.assertIn("rxjava", parsed["bundles"]["common"])
+
+    def test_validate_settings_and_agp_lint_pairing(self):
+        self._write("settings.gradle.kts", 'include(":core")\ninclude(":missing-mod")\n')
+        self._write("core/build.gradle.kts", "plugins {}\n")
+        self.assertEqual(len(sync_upstream.validate_settings_modules()), 1)
+        self.assertIn(":missing-mod", sync_upstream.validate_settings_modules()[0])
+
+        self._write(
+            "gradle/libs.versions.toml",
+            '[versions]\nandroid-gradle = "9.5.1"\nlint = "32.4.1"\n[libraries]\n',
+        )
+        errs = sync_upstream.validate_version_catalog_references()
+        self.assertTrue(any("incompatibilidade AGP/Lint" in e for e in errs))
+
+    def test_validate_local_project_deps_ignores_kotlin_interpolation(self):
+        self._write("core/build.gradle.kts", "plugins {}\n")
+        self._write(
+            "gradle/build-logic/src/main/kotlin/ExtensionPlugin.kt",
+            'val x = keiyoushi.theme.map { project(":lib-multisrc:$it") }\n'
+            'val y = project(":core")\n',
+        )
+        self.assertEqual(sync_upstream.validate_local_project_dependencies(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
