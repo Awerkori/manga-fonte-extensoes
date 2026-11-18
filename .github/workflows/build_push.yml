@@ -67,6 +67,9 @@ jobs:
           "$RUNNER_TEMP/nox-publish-venv/bin/python" -m pip install --require-hashes --only-binary=:all: --requirement .github/scripts/requirements-publish.txt
           "$RUNNER_TEMP/nox-publish-venv/bin/python" .github/scripts/test_publish_runtime.py
 
+      - name: Validate structural build configuration
+        run: python3 ./.github/scripts/sync-upstream.py --validate-only
+
       - name: Validate reused build artifacts
         if: ${{ inputs.reuse_artifact_run_id != '' || inputs.reuse_module != '' }}
         env:

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import shutil
 import tempfile
+import tomllib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import NamedTuple
@@ -18,6 +19,18 @@ SYNC_BRANCH = "sync"
 DEFERRED_MIGRATIONS_FILE = Path(".github/sync-deferred-migrations.json")
 DEFERRED_INCOMPATIBILITIES_FILE = Path(".github/sync-deferred-incompatibilities.json")
 FAILURE_SIGNATURES_FILE = Path(".github/sync-failure-signatures.json")
+LIBS_CATALOG_FILE = Path("gradle/libs.versions.toml")
+KEI_CATALOG_FILE = Path("gradle/kei.versions.toml")
+INFRA_EXACT_PATHS = {
+    "core",
+    "common",
+    "compiler",
+    "lint-rules",
+    "build.gradle.kts",
+    "gradle.properties",
+    "settings.gradle.kts",
+}
+INFRA_PREFIXES = ("core/", "common/", "compiler/", "gradle/", "lint-rules/")
 
 
 def git(*args: str, check: bool = True) -> str:
@@ -626,7 +639,7 @@ class ApplyUnitsResult(list):
 
 
 _GRADLE_FAILED_TASK_RE = re.compile(
-    r"(?:> Task :((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler):([a-zA-Z0-9]+)\s+FAILED|Execution failed for task ':((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler):([a-zA-Z0-9]+)')",
+    r"(?:> Task :((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler|lint-rules):([a-zA-Z0-9]+)\s+FAILED|Execution failed for task ':((?:src:[^:]+:[^:]+)|(?:lib:[^:]+)|(?:lib-multisrc:[^:]+)|core|compiler|lint-rules):([a-zA-Z0-9]+)')",
 )
 _KOTLIN_ERROR_RE = re.compile(r"e:\s+file:///(.+?):(\d+):(\d+)\s*(.+)")
 
@@ -656,7 +669,32 @@ def parse_gradle_failures(output: str) -> dict[str, dict[str, object]]:
                 break
         if not matched_unit:
             parts = file_path.split("/")
+            for infra_name in ("lint-rules", "core", "compiler"):
+                if infra_name in parts:
+                    if infra_name not in failed_units:
+                        failed_units[infra_name] = {
+                            "unit": infra_name,
+                            "cause": msg.strip(),
+                            "evidence": "",
+                            "incompatibility_type": "CORE_INCOMPATIBILITY",
+                        }
+                    matched_unit = infra_name
+                    break
+            if not matched_unit and "gradle" in parts:
+                idx = parts.index("gradle")
+                if idx + 1 < len(parts) and parts[idx + 1] == "build-logic":
+                    u = "gradle/build-logic"
+                    if u not in failed_units:
+                        failed_units[u] = {
+                            "unit": u,
+                            "cause": msg.strip(),
+                            "evidence": "",
+                            "incompatibility_type": "CORE_INCOMPATIBILITY",
+                        }
+                    matched_unit = u
             for prefix in ("src", "lib", "lib-multisrc"):
+                if matched_unit:
+                    break
                 if prefix in parts:
                     idx = parts.index(prefix)
                     if prefix == "src" and idx + 2 < len(parts):
@@ -694,7 +732,7 @@ def parse_gradle_failures(output: str) -> dict[str, dict[str, object]]:
             info["incompatibility_type"] = "API_SIGNATURE_MISMATCH"
         elif re.search(r"Could not resolve|Plugin.*not found|project.*não existe|não existe", full_text, re.I):
             info["incompatibility_type"] = "DEPENDENCY_CONFLICT"
-        elif unit in {"core", "compiler"}:
+        elif unit in {"core", "compiler", "lint-rules", "gradle/build-logic"}:
             info["incompatibility_type"] = "CORE_INCOMPATIBILITY"
         else:
             info["incompatibility_type"] = "KOTLIN_COMPILATION_ERROR"
@@ -1100,17 +1138,32 @@ def validate_multisrc_compatibility() -> list[str]:
 def validate_local_project_dependencies() -> list[str]:
     """Return Gradle project dependencies whose local module no longer exists."""
     errors = []
-    roots = [Path("core"), Path("compiler"), Path("lib"), Path("lib-multisrc"), Path("src")]
-    build_files = []
+    roots = [
+        Path("core"),
+        Path("compiler"),
+        Path("lint-rules"),
+        Path("gradle/build-logic/src"),
+        Path("lib"),
+        Path("lib-multisrc"),
+        Path("src"),
+    ]
+    build_files: list[Path] = []
+    root_build = Path("build.gradle.kts")
+    if root_build.is_file():
+        build_files.append(root_build)
     for root in roots:
         if root.is_dir():
             build_files.extend(root.rglob("build.gradle.kts"))
             build_files.extend(root.rglob("build.gradle"))
+            if root == Path("gradle/build-logic/src"):
+                build_files.extend(root.rglob("*.kt"))
 
     for build_file in sorted(set(build_files)):
-        content = build_file.read_text()
+        content = build_file.read_text(encoding="utf-8", errors="ignore")
         for match in _LOCAL_PROJECT_RE.finditer(content):
             project_path = match.group(1)
+            if "$" in project_path:
+                continue
             module_path = Path(*project_path.removeprefix(":").split(":"))
             has_build_file = any(
                 (module_path / filename).is_file()
@@ -1122,6 +1175,366 @@ def validate_local_project_dependencies() -> list[str]:
                     f"{build_file}:{line_number}: {project_path} -> "
                     f"{module_path} não existe",
                 )
+    return errors
+
+
+_COMMENT_OR_STRING_RE = re.compile(
+    r'/\*.*?\*/|//[^\n]*|""".*?"""|"(?:\\.|[^"\\])*"',
+    re.DOTALL,
+)
+_CATALOG_REF_RE = re.compile(r"\b(libs|kei)\.([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*)")
+_SETTINGS_INCLUDE_RE = re.compile(r'\binclude\s*\(\s*"(:?[^"$]+)"\s*\)')
+_TOML_SECTION_RE = re.compile(r"^\s*\[([a-zA-Z0-9_.-]+)\]\s*(?:#.*)?$")
+_TOML_ASSIGN_RE = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*=\s*(.*)$")
+_SEMVER3_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+_CATALOG_PROVIDER_SUFFIXES = {
+    "get",
+    "orNull",
+    "orElse",
+    "version",
+    "pluginId",
+    "requiredVersion",
+    "strictVersion",
+    "preferredVersion",
+    "displayName",
+    "asProvider",
+}
+_CATALOG_IGNORED_PREFIXES = {
+    "libs.versions",
+    "libs.bundles",
+    "libs.plugins",
+    "kei.versions",
+    "kei.bundles",
+    "kei.plugins",
+    "libs.class",
+    "kei.class",
+    "libs.java",
+    "kei.java",
+    "libs.extensionsLib",
+    "libs.ktlint",
+}
+
+
+def is_infra_path(path: str) -> bool:
+    """Return True if path belongs to shared build, core, compiler, or lint infrastructure."""
+    normalized = path.strip("/")
+    return normalized in INFRA_EXACT_PATHS or normalized.startswith(INFRA_PREFIXES)
+
+
+def _strip_comments_preserving_newlines(text: str, strip_strings: bool = False) -> str:
+    def _replacer(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if not strip_strings and token.startswith('"'):
+            return token
+        return "\n" * token.count("\n")
+
+    return _COMMENT_OR_STRING_RE.sub(_replacer, text)
+
+
+def _catalog_accessor_paths(data: dict[str, object]) -> set[str]:
+    def _norm(key: str) -> str:
+        return re.sub(r"[-_.]+", ".", key)
+
+    paths: set[str] = set()
+    for section, prefix in (
+        ("libraries", ""),
+        ("versions", "versions."),
+        ("bundles", "bundles."),
+        ("plugins", "plugins."),
+    ):
+        entries = data.get(section, {})
+        if isinstance(entries, dict):
+            for key in entries:
+                paths.add(f"{prefix}{_norm(str(key))}")
+    return paths
+
+
+def _pair_lint_version(local_agp: str | None, upstream_agp: str | None, upstream_lint: str | None) -> str | None:
+    if not upstream_lint:
+        return None
+    if not local_agp or not upstream_agp or local_agp == upstream_agp:
+        return upstream_lint
+    loc_m = _SEMVER3_RE.match(local_agp)
+    up_agp_m = _SEMVER3_RE.match(upstream_agp)
+    up_lint_m = _SEMVER3_RE.match(upstream_lint)
+    if loc_m and up_agp_m and up_lint_m:
+        if int(up_lint_m.group(1)) == int(up_agp_m.group(1)) + 23:
+            return f"{int(loc_m.group(1)) + 23}.{loc_m.group(2)}.{loc_m.group(3)}"
+    return upstream_lint
+
+
+def _extract_toml_section_blocks(toml_text: str) -> dict[str, dict[str, str]]:
+    """Extract raw assignment statements per TOML section from upstream catalog text."""
+    blocks: dict[str, dict[str, str]] = {}
+    current_section: str | None = None
+    lines = toml_text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        sec_m = _TOML_SECTION_RE.match(line)
+        if sec_m:
+            current_section = sec_m.group(1)
+            blocks.setdefault(current_section, {})
+            i += 1
+            continue
+        assign_m = _TOML_ASSIGN_RE.match(line)
+        if current_section and assign_m and not line.lstrip().startswith("#"):
+            key = assign_m.group(1)
+            stmt_lines = [line]
+            balance = line.count("[") - line.count("]") + line.count("{") - line.count("}")
+            while balance > 0 and i + 1 < len(lines):
+                i += 1
+                stmt_lines.append(lines[i])
+                balance += lines[i].count("[") - lines[i].count("]") + lines[i].count("{") - lines[i].count("}")
+            blocks[current_section][key] = "\n".join(stmt_lines)
+        i += 1
+    return blocks
+
+
+def _insert_toml_statements(toml_text: str, additions_by_section: dict[str, list[str]]) -> str:
+    """Insert missing TOML entries into existing sections, creating absent sections at EOF."""
+    lines = toml_text.splitlines()
+    pending = {sec: list(stmts) for sec, stmts in additions_by_section.items() if stmts}
+    if not pending:
+        return toml_text
+
+    out: list[str] = []
+    current_section: str | None = None
+
+    def _flush_section(sec: str | None) -> None:
+        if sec and sec in pending:
+            trailing_blanks = 0
+            while out and not out[-1].strip():
+                out.pop()
+                trailing_blanks += 1
+            out.extend(pending.pop(sec))
+            out.extend([""] * trailing_blanks)
+
+    for line in lines:
+        sec_m = _TOML_SECTION_RE.match(line)
+        if sec_m:
+            _flush_section(current_section)
+            current_section = sec_m.group(1)
+        out.append(line)
+
+    _flush_section(current_section)
+    for sec, stmts in pending.items():
+        if out and out[-1].strip():
+            out.append("")
+        out.append(f"[{sec}]")
+        out.extend(stmts)
+
+    return "\n".join(out) + "\n"
+
+
+def _format_toml_library_or_version(section: str, key: str, value: object) -> str:
+    if isinstance(value, str):
+        return f'{key} = "{value}"'
+    if isinstance(value, list):
+        items = ", ".join(f'"{item}"' for item in value)
+        return f"{key} = [{items}]"
+    if isinstance(value, dict):
+        parts = []
+        for sub_k, sub_v in value.items():
+            if isinstance(sub_v, str):
+                parts.append(f'{sub_k} = "{sub_v}"')
+            else:
+                parts.append(f"{sub_k} = {json.dumps(sub_v)}")
+        return f"{key} = {{ {', '.join(parts)} }}"
+    return f"{key} = {json.dumps(value)}"
+
+
+def reconcile_version_catalog(upstream_ref: str, *, apply: bool = True) -> bool:
+    """Safely integrate missing upstream aliases into gradle/libs.versions.toml without clobbering Nox pins."""
+    if not LIBS_CATALOG_FILE.is_file():
+        return False
+    upstream_text = _read_file_text(upstream_ref, str(LIBS_CATALOG_FILE))
+    if not upstream_text:
+        return False
+    local_text = LIBS_CATALOG_FILE.read_text(encoding="utf-8")
+
+    try:
+        local_data = tomllib.loads(local_text)
+        upstream_data = tomllib.loads(upstream_text)
+    except tomllib.TOMLDecodeError:
+        return False
+
+    upstream_blocks = _extract_toml_section_blocks(upstream_text)
+    additions: dict[str, list[str]] = {}
+
+    local_versions = local_data.get("versions", {})
+    upstream_versions = upstream_data.get("versions", {})
+    local_agp = local_versions.get("android-gradle") if isinstance(local_versions, dict) else None
+    upstream_agp = upstream_versions.get("android-gradle") if isinstance(upstream_versions, dict) else None
+
+    for key, val in upstream_versions.items():
+        if key not in local_versions:
+            if key == "lint":
+                paired = _pair_lint_version(
+                    str(local_agp) if local_agp else None,
+                    str(upstream_agp) if upstream_agp else None,
+                    str(val),
+                )
+                stmt = f'lint = "{paired or val}"'
+            else:
+                stmt = upstream_blocks.get("versions", {}).get(key) or _format_toml_library_or_version("versions", key, val)
+            additions.setdefault("versions", []).append(stmt)
+
+    for section in ("libraries", "plugins"):
+        local_sec = local_data.get(section, {})
+        upstream_sec = upstream_data.get(section, {})
+        for key, val in upstream_sec.items():
+            if key not in local_sec:
+                if isinstance(val, dict) and "version.ref" in val:
+                    ref_name = val["version.ref"]
+                    if ref_name not in local_versions and ref_name in upstream_versions:
+                        if not any(s.startswith(f"{ref_name} ") or s.startswith(f"{ref_name}=") for s in additions.get("versions", [])):
+                            stmt_v = upstream_blocks.get("versions", {}).get(ref_name) or _format_toml_library_or_version("versions", ref_name, upstream_versions[ref_name])
+                            additions.setdefault("versions", []).append(stmt_v)
+                stmt = upstream_blocks.get(section, {}).get(key) or _format_toml_library_or_version(section, key, val)
+                additions.setdefault(section, []).append(stmt)
+
+    updated_text = _insert_toml_statements(local_text, additions)
+
+    # Merge additive items inside [bundles] (preserving Nox entries such as "rxjava" in common)
+    local_bundles = local_data.get("bundles", {})
+    upstream_bundles = upstream_data.get("bundles", {})
+    bundle_additions: list[str] = []
+    for bundle_name, up_items in upstream_bundles.items():
+        if not isinstance(up_items, list):
+            continue
+        if bundle_name not in local_bundles:
+            bundle_additions.append(_format_toml_library_or_version("bundles", bundle_name, up_items))
+        elif isinstance(local_bundles[bundle_name], list):
+            missing_items = [item for item in up_items if item not in local_bundles[bundle_name]]
+            if missing_items:
+                merged_items = [*local_bundles[bundle_name], *missing_items]
+                new_bundle_line = _format_toml_library_or_version("bundles", bundle_name, merged_items)
+                pattern = re.compile(rf"(?m)^[ \t]*{re.escape(bundle_name)}\s*=\s*\[[^\]]*\]")
+                updated_text = pattern.sub(new_bundle_line, updated_text, count=1)
+
+    if bundle_additions:
+        updated_text = _insert_toml_statements(updated_text, {"bundles": bundle_additions})
+
+    if updated_text == local_text:
+        return False
+
+    # Fail closed if reconstructed TOML is invalid
+    tomllib.loads(updated_text)
+    if apply:
+        LIBS_CATALOG_FILE.write_text(updated_text, encoding="utf-8")
+        print("Reconciled missing entries in gradle/libs.versions.toml from upstream while preserving Nox pins")
+    return True
+
+
+def validate_settings_modules() -> list[str]:
+    """Ensure static include(...) modules declared in settings.gradle.kts exist on disk."""
+    settings_file = Path("settings.gradle.kts")
+    if not settings_file.is_file():
+        return []
+    errors: list[str] = []
+    content = _strip_comments_preserving_newlines(settings_file.read_text(encoding="utf-8", errors="ignore"))
+    for match in _SETTINGS_INCLUDE_RE.finditer(content):
+        mod_ref = match.group(1)
+        mod_path = Path(*mod_ref.removeprefix(":").split(":"))
+        if not ((mod_path / "build.gradle.kts").is_file() or (mod_path / "build.gradle").is_file()):
+            line_number = content.count("\n", 0, match.start()) + 1
+            errors.append(f"settings.gradle.kts:{line_number}: módulo incluído '{mod_ref}' não existe em {mod_path}")
+    return errors
+
+
+def validate_version_catalog_references() -> list[str]:
+    """Validate catalog integrity and ensure all build script libs/kei aliases resolve."""
+    if not LIBS_CATALOG_FILE.is_file():
+        return []
+    errors: list[str] = []
+    catalog_paths: dict[str, set[str]] = {}
+    parsed_catalogs: dict[str, dict[str, object]] = {}
+
+    for cat_name, cat_file in (("libs", LIBS_CATALOG_FILE), ("kei", KEI_CATALOG_FILE)):
+        if not cat_file.is_file():
+            continue
+        try:
+            data = tomllib.loads(cat_file.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            errors.append(f"{cat_file}: erro de sintaxe TOML: {exc}")
+            return errors
+        parsed_catalogs[cat_name] = data
+        catalog_paths[cat_name] = _catalog_accessor_paths(data)
+
+        versions_tbl = data.get("versions", {})
+        libs_tbl = data.get("libraries", {})
+        plugins_tbl = data.get("plugins", {})
+        bundles_tbl = data.get("bundles", {})
+
+        if isinstance(libs_tbl, dict) and isinstance(versions_tbl, dict):
+            for lib_k, lib_v in libs_tbl.items():
+                if isinstance(lib_v, dict) and "version.ref" in lib_v:
+                    ref_k = lib_v["version.ref"]
+                    if ref_k not in versions_tbl:
+                        errors.append(f"{cat_file}: biblioteca '{lib_k}' referencia version.ref '{ref_k}' ausente em [versions]")
+        if isinstance(plugins_tbl, dict) and isinstance(versions_tbl, dict):
+            for plg_k, plg_v in plugins_tbl.items():
+                if isinstance(plg_v, dict) and "version.ref" in plg_v:
+                    ref_k = plg_v["version.ref"]
+                    if ref_k not in versions_tbl:
+                        errors.append(f"{cat_file}: plugin '{plg_k}' referencia version.ref '{ref_k}' ausente em [versions]")
+        if isinstance(bundles_tbl, dict) and isinstance(libs_tbl, dict):
+            for b_k, b_items in bundles_tbl.items():
+                if isinstance(b_items, list):
+                    for item in b_items:
+                        if item not in libs_tbl:
+                            errors.append(f"{cat_file}: bundle '{b_k}' referencia biblioteca '{item}' ausente em [libraries]")
+
+    libs_versions = parsed_catalogs.get("libs", {}).get("versions", {})
+    if isinstance(libs_versions, dict):
+        agp_ver = libs_versions.get("android-gradle")
+        lint_ver = libs_versions.get("lint")
+        if agp_ver and lint_ver:
+            agp_m = _SEMVER3_RE.match(str(agp_ver))
+            lint_m = _SEMVER3_RE.match(str(lint_ver))
+            if agp_m and lint_m:
+                expected_major = int(agp_m.group(1)) + 23
+                if int(lint_m.group(1)) != expected_major or lint_m.group(2) != agp_m.group(2):
+                    errors.append(
+                        f"{LIBS_CATALOG_FILE}: incompatibilidade AGP/Lint: android-gradle='{agp_ver}' "
+                        f"requer lint '{expected_major}.{agp_m.group(2)}.x', mas encontrado lint='{lint_ver}'"
+                    )
+
+    script_files: list[Path] = []
+    if Path("build.gradle.kts").is_file():
+        script_files.append(Path("build.gradle.kts"))
+    for root in (Path("core"), Path("compiler"), Path("lint-rules"), Path("lib"), Path("lib-multisrc"), Path("src"), Path("gradle/build-logic")):
+        if root.is_dir():
+            script_files.extend(root.rglob("*.gradle.kts"))
+            if root == Path("gradle/build-logic"):
+                script_files.extend(root.rglob("*.kt"))
+
+    for script_file in sorted(set(script_files)):
+        posix_path = script_file.as_posix()
+        if "/build/" in posix_path or posix_path.startswith("gradle/build-logic/build/"):
+            continue
+        raw = script_file.read_text(encoding="utf-8", errors="ignore")
+        cleaned = _strip_comments_preserving_newlines(raw, strip_strings=True)
+        for line_num, line in enumerate(cleaned.splitlines(), 1):
+            for m in _CATALOG_REF_RE.finditer(line):
+                cat, chain = m.group(1), m.group(2)
+                if cat not in catalog_paths:
+                    continue
+                parts = chain.split(".")
+                while parts and parts[-1] in _CATALOG_PROVIDER_SUFFIXES:
+                    parts.pop()
+                if not parts:
+                    continue
+                cand = ".".join(parts)
+                full = f"{cat}.{cand}"
+                if full in _CATALOG_IGNORED_PREFIXES or cand in {"java", "class"}:
+                    continue
+                declared = catalog_paths[cat]
+                if not any(cand == entry or cand.startswith(entry + ".") for entry in declared):
+                    errors.append(f"{posix_path}:{line_num}: alias '{full}' não encontrado em gradle/{cat}.versions.toml")
+
     return errors
 
 
@@ -1295,6 +1708,38 @@ suspend fun OkHttpClient.post(
     run_cmd(["git", "add", "--", str(okhttp_file)], check=False)
 
 
+def validate_infra_builds() -> None:
+    """Verify shared infrastructure (:lint-rules, :core, lintRelease integration) builds cleanly."""
+    gradlew = Path("gradlew")
+    if not gradlew.exists():
+        return
+    tasks: list[str] = []
+    if Path("lint-rules/build.gradle.kts").is_file():
+        tasks.append(":lint-rules:test")
+    if Path("core/build.gradle.kts").is_file():
+        tasks.append(":core:testDebugUnitTest")
+    if Path("src/pt/xxxyaoi/build.gradle.kts").is_file():
+        tasks.append(":src:pt:xxxyaoi:lintRelease")
+    if not tasks:
+        return
+    print(f"Validating build infrastructure tasks: {' '.join(tasks)}")
+    result = subprocess.run([f"./{gradlew.name}", "--no-scan", "--console=plain", *tasks], capture_output=True, text=True)
+    stdout = getattr(result, "stdout", "") or ""
+    stderr = getattr(result, "stderr", "") or ""
+    if stdout:
+        print(stdout)
+    if stderr:
+        print(stderr, file=sys.stderr)
+    if result.returncode != 0:
+        combined = f"{stdout}\n{stderr}"
+        failures = parse_gradle_failures(combined)
+        failed_units = sorted(failures.keys()) or ["gradle-infra"]
+        raise StructuralIncompatibilityError(
+            f"Build infrastructure validation failed ({', '.join(failed_units)}): {combined[-800:]}",
+            failed_units=failed_units,
+        )
+
+
 def validate_affected_builds(units: list[str]) -> None:
     """Compile migrated sources too: source-info alone cannot detect shared API breakage."""
     gradlew = Path("gradlew")
@@ -1362,7 +1807,7 @@ def validate_and_isolate_affected_builds(
             if not failures:
                 raise
 
-            if "core" in failures or "compiler" in failures:
+            if any(u in {"core", "compiler", "lint-rules", "gradle/build-logic"} for u in failures):
                 raise StructuralIncompatibilityError(
                     "Core library structural failure detected",
                     failed_units=list(failures.keys()),
@@ -2109,6 +2554,10 @@ def _apply_units(
     if write_deferred_migrations(deferred):
         git("add", "--", str(DEFERRED_MIGRATIONS_FILE))
 
+    catalog_changed = reconcile_version_catalog(upstream_ref, apply=True)
+    if catalog_changed:
+        git("add", "--", str(LIBS_CATALOG_FILE))
+
     git("diff", "--check")
 
     dependency_errors = validate_local_project_dependencies()
@@ -2118,6 +2567,26 @@ def _apply_units(
             print(f"  - {error}")
         git("merge", "--abort", check=False)
         sys.exit(1)
+
+    settings_errors = validate_settings_modules()
+    if settings_errors:
+        print("Settings module validation failed:")
+        for error in settings_errors:
+            print(f"  - {error}")
+        raise StructuralIncompatibilityError(
+            f"Settings module validation failed: {settings_errors[0]}",
+            failed_units=["settings.gradle.kts"],
+        )
+
+    catalog_errors = validate_version_catalog_references()
+    if catalog_errors:
+        print("Version catalog reference validation failed:")
+        for error in catalog_errors:
+            print(f"  - {error}")
+        raise StructuralIncompatibilityError(
+            f"Version catalog reference validation failed: {catalog_errors[0]}",
+            failed_units=["gradle/libs.versions.toml"],
+        )
 
     errors = validate_multisrc_compatibility()
     if errors:
@@ -2138,14 +2607,16 @@ def _apply_units(
         git("merge", "--abort", check=False)
         sys.exit(1)
 
+    infra_changed = catalog_changed or any(is_infra_path(unit) for unit in units)
+    if infra_changed:
+        validate_infra_builds()
+
     try:
         valid_units, newly_isolated = validate_and_isolate_affected_builds(
             validation_units, protected_units, upstream_ref, bumped, previous_versions
         )
-    except StructuralIncompatibilityError as error:
-        print(f"Structural incompatibility: {error}")
-        git("merge", "--abort", check=False)
-        sys.exit(1)
+    except StructuralIncompatibilityError:
+        raise
     except RuntimeError as error:
         print(str(error))
         git("merge", "--abort", check=False)
@@ -2283,11 +2754,26 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--apply-no-push", action="store_true")
+    parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
 
-    if sum((args.dry_run, args.push, args.apply_no_push)) > 1:
-        print("Use only one of --dry-run, --push, or --apply-no-push")
+    if sum((args.dry_run, args.push, args.apply_no_push, args.validate_only)) > 1:
+        print("Use only one of --dry-run, --push, --apply-no-push, or --validate-only")
         sys.exit(1)
+
+    if args.validate_only:
+        all_errors = (
+            validate_local_project_dependencies()
+            + validate_settings_modules()
+            + validate_version_catalog_references()
+            + validate_multisrc_compatibility()
+        )
+        if all_errors:
+            for err in all_errors:
+                print(f"VALIDATION_ERROR: {err}", file=sys.stderr)
+            sys.exit(1)
+        print("STRUCTURAL_VALIDATION=PASS")
+        return
 
     ensure_clean_tree()
     ensure_upstream_remote()
@@ -2417,10 +2903,10 @@ def main() -> None:
         else:
             updated_units.append(unit)
 
-    core_changed = any(
-        path in {"core", "common", "compiler"} or path.startswith(("core/", "common/", "compiler/", "gradle/"))
-        for _, paths in upstream_entries
-        for path in paths
+    catalog_pending = reconcile_version_catalog(upstream_ref, apply=False)
+    core_changed = (
+        any(is_infra_path(path) for _, paths in upstream_entries for path in paths)
+        or catalog_pending
     )
     if core_changed:
         for pu in protected_units:
@@ -2438,6 +2924,7 @@ def main() -> None:
         and not load_deferred_migrations()
         and not load_deferred_incompatibilities()
         and not effective_diff
+        and not catalog_pending
     )
 
     trigger = os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch")
