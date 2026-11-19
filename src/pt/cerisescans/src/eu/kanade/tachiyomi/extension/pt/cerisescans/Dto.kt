@@ -48,15 +48,21 @@ class ComicDto(
 
 @Serializable
 class ChapterDto(
-    private val id: String,
+    val id: String,
     private val number: String,
     private val title: String,
     private val createdAt: String?,
 ) {
+    val chapterNumber: Float get() = number.toFloat()
+
+    val timestamp: Long get() = Instant.tryParse(createdAt)
+
+    fun matchesNumber(raw: String): Boolean = raw.toFloatOrNull()?.let { it == chapterNumber } == true
+
     fun toSChapter() = SChapter.create().apply {
         url = id
         name = title.ifBlank { "Capítulo ${number.removeSuffix(".0")}" }
-        chapter_number = number.toFloat()
-        date_upload = Instant.tryParse(createdAt)
+        chapter_number = chapterNumber
+        date_upload = timestamp
     }
 }
