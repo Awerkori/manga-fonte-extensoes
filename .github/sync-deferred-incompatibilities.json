@@ -1,14 +1,14 @@
 {
   "incompatibilities": {
     "src/zh/wnacg": {
-      "attempts": 68,
+      "attempts": 69,
       "cause": "Cannot access 'val mirrors: List<Pair<String, String>>': it is private in 'keiyoushi.source.MirrorPreferences'.",
       "compilation_evidence": "e: file:///home/runner/work/manga-fonte-extensoes/manga-fonte-extensoes/src/zh/wnacg/src/eu/kanade/tachiyomi/extension/zh/wnacg/WNACG.kt:56:57 Cannot access 'val mirrors: List<Pair<String, String>>': it is private in 'keiyoushi.source.MirrorPreferences'.",
       "dependencies": [
         ":core"
       ],
       "incompatibility_type": "API_SIGNATURE_MISMATCH",
-      "last_attempt_at": "2026-11-20T20:40:35.097300+00:00",
+      "last_attempt_at": "2026-11-20T20:49:11.072751+00:00",
       "last_functional_version": {
         "android_code": 106008,
         "lib": "1.6",
@@ -16,7 +16,7 @@
         "raw": 8
       },
       "module": "src/zh/wnacg",
-      "next_attempt_at": "2026-11-20T20:55:35.097325+00:00",
+      "next_attempt_at": "2026-11-20T21:04:11.072777+00:00",
       "recovery_state": "DEFERRED_INCOMPATIBLE",
       "upstream_commit": "ef952a64df"
     }
