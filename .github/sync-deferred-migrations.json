@@ -1,5 +1,12 @@
 {
   "themes": {
+    "aesir": {
+      "units": [
+        "src/id/kaguya",
+        "src/id/kumopoi"
+      ],
+      "upstream_ref": "upstream/main"
+    },
     "aurora": {
       "patch_base": "1dfd0bcf25b48cb5bd42d9191918a29072c67a61",
       "reason": "functional conflict: lib-multisrc/aurora/src/eu/kanade/tachiyomi/multisrc/aurora/Aurora.kt",
@@ -9,7 +16,7 @@
         "src/pt/mangasbrasuka",
         "src/pt/mugiwarasoficial"
       ],
-      "upstream_ref": "e886805b04726e402f77401ed77a1acd41bbfee9"
+      "upstream_ref": "ef952a64df831c33c29c276d9c283b4cd7633ce1"
     },
     "catharsis": {
       "units": [
@@ -27,7 +34,7 @@
     },
     "madara": {
       "patch_base": "f1bd88dacd89dfe644369c397efedf79965bf4c0",
-      "reason": "[Errno 2] No such file or directory: '/tmp/nox-multisrc-proof-eia5w4be/repo/src/all/fastestmanga/build.gradle.kts'",
+      "reason": "[Errno 2] No such file or directory: '/tmp/nox-multisrc-proof-wmw8qszx/repo/src/all/fastestmanga/build.gradle.kts'",
       "units": [
         "src/all/allporncomicsco",
         "src/all/comicsvalley",
@@ -277,7 +284,7 @@
         "src/vi/truyentuoitho",
         "src/zh/bakamh"
       ],
-      "upstream_ref": "e886805b04726e402f77401ed77a1acd41bbfee9"
+      "upstream_ref": "ef952a64df831c33c29c276d9c283b4cd7633ce1"
     }
   }
 }
