@@ -8,8 +8,7 @@ import keiyoushi.utils.tryParse
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.math.BigDecimal
-import java.text.SimpleDateFormat
-import java.util.Locale
+import kotlin.time.Instant
 
 @Serializable
 class MangasListDto(
@@ -121,7 +120,7 @@ class VolumeChapterDto(
         SChapter.create().apply {
             name = chapterLabel
             chapter_number = it.number
-            date_upload = DATE_FORMAT.tryParse(it.createdAt)
+            date_upload = Instant.tryParse(it.createdAt)
             url = "$pathSegment/capitulo/$chapterLabel"
         }
     }
@@ -129,10 +128,6 @@ class VolumeChapterDto(
     private fun formatChapterNumber(number: Float): String = BigDecimal(number.toString())
         .stripTrailingZeros()
         .toPlainString()
-
-    companion object {
-        private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT)
-    }
 }
 
 @Serializable

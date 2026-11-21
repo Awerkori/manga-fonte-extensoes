@@ -1,18 +1,13 @@
 package eu.kanade.tachiyomi.extension.pt.argoscomics
 
 import android.app.AlertDialog
-import android.app.Dialog
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.util.Log
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import androidx.preference.EditTextPreference
 import androidx.preference.Preference
-import eu.kanade.tachiyomi.network.POST
+import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -33,10 +28,12 @@ import keiyoushi.utils.toJsonRequestBody
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import okhttp3.Cookie
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
-import java.io.ByteArrayInputStream
-import java.io.IOException
+import okhttp3.RequestBody
+import okhttp3.Response
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import kotlin.time.Duration.Companion.seconds
 
@@ -47,6 +44,9 @@ abstract class ArgosComics :
 
     private val preferences by getPreferencesLazy()
     private val authExecutor = Executors.newSingleThreadExecutor()
+    private val email get() = preferences.getString(EMAIL_PREF, "")!!
+    private val password get() = preferences.getString(PASSWORD_PREF, "")!!
+    private val actionIds = ConcurrentHashMap(DEFAULT_ACTION_IDS)
 
     override fun OkHttpClient.Builder.configureClient() = apply {
         rateLimit(3, 2.seconds)
@@ -56,24 +56,14 @@ abstract class ArgosComics :
         get() = headersBuilder().set("rsc", "1").build()
 
     override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {
-        lateinit var action: androidx.preference.Preference
         lateinit var status: androidx.preference.Preference
         lateinit var logout: androidx.preference.Preference
 
         fun update(valid: Boolean) {
-            action.title = if (valid) "Abrir Argos Comics" else "Conectar à Argos Comics"
-            action.summary = if (valid) "Abre o site da Argos Comics." else "Abre o login oficial da Argos Comics."
             status.summary = if (valid) "Conectado" else "Não conectado"
             setPreferenceVisible(logout, valid)
         }
 
-        action = createPreference(screen.context).apply {
-            key = "argos_comics_connect"
-            setOnPreferenceClickListener {
-                showLoginWebView(screen.context) { update(validateSession()) }
-                true
-            }
-        }
         status = createPreference(screen.context).apply {
             key = "argos_comics_status"
             title = "Sessão da Argos Comics"
@@ -85,21 +75,44 @@ abstract class ArgosComics :
             summary = "Remove a sessão da Argos Comics salva neste aplicativo."
             setOnPreferenceClickListener {
                 AlertDialog.Builder(screen.context).setTitle("Sair da conta?")
-                    .setMessage("Isso removerá somente a sessão da Argos Comics.")
+                    .setMessage("Isso removerá a sessão da Argos Comics e o e-mail e a senha salvos.")
                     .setPositiveButton("Sair") { _, _ ->
                         clearSession()
+                        preferences.edit().remove(EMAIL_PREF).remove(PASSWORD_PREF).apply()
                         update(false)
                     }
                     .setNegativeButton("Cancelar", null).show()
                 true
             }
         }
-        screen.addPreference(action)
         screen.addPreference(status)
         screen.addPreference(logout)
+        EditTextPreference(screen.context).apply {
+            key = EMAIL_PREF
+            title = "E-mail"
+            summary = "E-mail da conta da Argos Comics, para entrar sem abrir o site"
+            setDefaultValue("")
+            setOnPreferenceChangeListener { _, _ ->
+                clearSession()
+                true
+            }
+        }.also(screen::addPreference)
+        EditTextPreference(screen.context).apply {
+            key = PASSWORD_PREF
+            title = "Senha"
+            summary = "Senha da conta da Argos Comics"
+            setDefaultValue("")
+            setOnBindEditTextListener {
+                it.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            setOnPreferenceChangeListener { _, _ ->
+                clearSession()
+                true
+            }
+        }.also(screen::addPreference)
         update(false)
         authExecutor.execute {
-            val valid = validateSession()
+            val valid = clientHasAccessToken()
             Handler(Looper.getMainLooper()).post { update(valid) }
         }
     }
@@ -120,48 +133,6 @@ abstract class ArgosComics :
         }
     }
 
-    private fun sessionCookies(): List<Cookie> {
-        val url = baseUrl.toHttpUrl()
-        val raw = CookieManager.getInstance().getCookie(baseUrl)
-        val cookies = raw?.split(';').orEmpty()
-            .mapNotNull { part -> Cookie.parse(url, "${part.trim()}; Domain=${url.host}; Path=/") }
-        Log.d(
-            DEBUG_TAG,
-            "stage=AUTH_WEB_COOKIES cookieNames=${cookies.map { it.name }.distinct().sorted()} " +
-                "hasAccessToken=${cookies.any { it.name == "access_token" }} " +
-                "domains=${cookies.map { it.domain }.distinct().sorted()} paths=${cookies.map { it.path }.distinct().sorted()}",
-        )
-        return cookies
-    }
-
-    private fun importSession(): Boolean {
-        val cookies = sessionCookies()
-        if (cookies.isEmpty()) {
-            Log.d(DEBUG_TAG, "stage=AUTH_SYNC webCookieNames=[] clientCookieNames=${clientCookieNames()} webHasAccessToken=false clientHasAccessToken=${clientHasAccessToken()}")
-            return false
-        }
-        client.cookieJar.saveFromResponse(baseUrl.toHttpUrl(), cookies)
-        CookieManager.getInstance().flush()
-        val clientNames = clientCookieNames()
-        val clientHasToken = clientHasAccessToken()
-        Log.d(
-            DEBUG_TAG,
-            "stage=AUTH_SYNC webCookieNames=${cookies.map { it.name }.distinct().sorted()} " +
-                "clientCookieNames=$clientNames webHasAccessToken=${cookies.any { it.name == "access_token" }} " +
-                "clientHasAccessToken=$clientHasToken",
-        )
-        return clientHasToken
-    }
-
-    private fun validateSession(): Boolean {
-        if (!importSession()) {
-            Log.d(DEBUG_TAG, "stage=AUTH_CONNECTED validated=false reason=access_token_not_available")
-            return false
-        }
-        Log.d(DEBUG_TAG, "stage=AUTH_CONNECTED validated=true reason=access_token_synced_after_login")
-        return true
-    }
-
     private fun clientCookieNames(): List<String> = client.cookieJar.loadForRequest(baseUrl.toHttpUrl())
         .map { it.name }.distinct().sorted()
 
@@ -169,84 +140,20 @@ abstract class ArgosComics :
 
     private fun clearSession() {
         val url = baseUrl.toHttpUrl()
-        sessionCookies().forEach { cookie ->
+        client.cookieJar.loadForRequest(url).forEach { cookie ->
             val expired = Cookie.Builder().name(cookie.name).value("").domain(cookie.domain).path(cookie.path)
                 .expiresAt(1L).build()
             client.cookieJar.saveFromResponse(url, listOf(expired))
-            CookieManager.getInstance().setCookie(baseUrl, "${cookie.name}=; Max-Age=0; Domain=${cookie.domain}; Path=${cookie.path}")
         }
-        CookieManager.getInstance().flush()
-        preferences.edit().clear().apply()
     }
-
-    private fun showLoginWebView(context: android.content.Context, onValidated: () -> Unit) {
-        val dialog = Dialog(context)
-        val webView = WebView(context)
-        var sessionHandled = false
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
-        webView.settings.javaScriptEnabled = true
-        webView.settings.domStorageEnabled = true
-        webView.settings.setSupportMultipleWindows(false)
-        webView.settings.javaScriptCanOpenWindowsAutomatically = false
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean = false
-        }
-        webView.webViewClient = object : WebViewClient() {
-            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? = if (isAuthAdHost(request?.url?.host.orEmpty())) {
-                WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
-            } else {
-                null
-            }
-
-            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = isAuthAdHost(request?.url?.host.orEmpty())
-
-            override fun onPageFinished(view: WebView?, url: String?) {
-                Log.d(DEBUG_TAG, "stage=AUTH_WEBVIEW_URL currentUrl=$url")
-                view?.evaluateJavascript(AUTH_CLEANUP_SCRIPT, null)
-                val path = url?.let { runCatching { it.toHttpUrl().encodedPath }.getOrNull() }
-                if (url?.startsWith(baseUrl) == true && path != "/login") {
-                    authExecutor.execute {
-                        if (!sessionHandled && validateSession()) {
-                            Handler(Looper.getMainLooper()).post {
-                                if (!sessionHandled) {
-                                    sessionHandled = true
-                                    CookieManager.getInstance().flush()
-                                    Log.d(DEBUG_TAG, "stage=AUTH_CONNECTED validated=true closingWebView=true")
-                                    onValidated()
-                                    dialog.dismiss()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        dialog.setContentView(webView)
-        dialog.setOnDismissListener { webView.destroy() }
-        dialog.show()
-        webView.loadUrl("$baseUrl/login")
-    }
-
-    private fun isAuthAdHost(host: String): Boolean = host == "platform.pubadx.one" ||
-        host.endsWith(".pubadx.one") ||
-        host == "static.cloudflareinsights.com" ||
-        host == "googletagmanager.com" ||
-        host.endsWith(".googletagmanager.com")
 
     private fun debugResponse(stage: String, response: okhttp3.Response) {
         val redirects = generateSequence(response.priorResponse) { it.priorResponse }.count()
         val clientCookies = client.cookieJar.loadForRequest(response.request.url).map { it.name }.distinct().sorted()
-        val webCookies = CookieManager.getInstance().getCookie(response.request.url.toString())
-            ?.split(';')
-            ?.mapNotNull { it.substringBefore('=').trim().takeIf(String::isNotEmpty) }
-            ?.distinct()
-            ?.sorted()
-            .orEmpty()
         Log.d(
             DEBUG_TAG,
             "stage=$stage url=${response.request.url} status=${response.code} " +
-                "redirects=$redirects clientCookieNames=$clientCookies webCookieNames=$webCookies",
+                "redirects=$redirects clientCookieNames=$clientCookies",
         )
     }
 
@@ -267,11 +174,8 @@ abstract class ArgosComics :
     // ======================== Search =============================
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val searchHeaders = headers.newBuilder()
-            .set("Next-Action", SEARCH_TOKEN)
-            .build()
         val payload = listOf(query).toJsonRequestBody()
-        val dto = client.post(baseUrl, searchHeaders, Fetch.XHR, payload).extractNextJs<List<MangaDto>>() ?: emptyList()
+        val dto = callAction("search", baseUrl, payload, "$baseUrl/projetos").extractNextJs<List<MangaDto>>() ?: emptyList()
         return MangasPage(dto.map(MangaDto::toSManga), false)
     }
 
@@ -287,10 +191,7 @@ abstract class ArgosComics :
             if (fetchDetails) {
                 val url = getMangaUrl(manga)
                 val payload = url.toHttpUrl().pathSegments.toJsonRequestBody()
-                val detailsHeaders = headers.newBuilder()
-                    .set("Next-Action", DETAILS_TOKEN)
-                    .build()
-                client.post(url, detailsHeaders, Fetch.XHR, payload).also { debugResponse("DETAILS", it) }
+                callAction("getOne", url, payload).also { debugResponse("DETAILS", it) }
                     .extractNextJs<MangaDetailsDto>()!!.toSManga()
             } else {
                 manga
@@ -301,10 +202,7 @@ abstract class ArgosComics :
             if (fetchChapters) {
                 val url = getMangaUrl(manga)
                 val payload = url.toHttpUrl().pathSegments.toJsonRequestBody()
-                val chaptersHeaders = headers.newBuilder()
-                    .set("Next-Action", CHAPTERS_TOKEN)
-                    .build()
-                val response = client.post(url, chaptersHeaders, Fetch.XHR, payload)
+                val response = callAction("getAllChapters", url, payload)
                 debugResponse("CHAPTERS", response)
                 val pathSegment = url.substringAfter(baseUrl)
                 response.extractNextJs<VolumeChapterDto>()!!.toChapterList(pathSegment)
@@ -319,33 +217,79 @@ abstract class ArgosComics :
     // ======================== Pages =============================
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        if (!validateSession()) throw IOException("🔐 Login necessário")
+        if (!ensureSession()) return emptyList()
+        readPages(chapter)?.let { return it }
+        clearSession()
+        if (!login()) return emptyList()
+        return readPages(chapter).orEmpty()
+    }
+
+    // null when the site did not accept the session
+    private suspend fun readPages(chapter: SChapter): List<Page>? {
         val storedChapterUrl = chapter.url
         val url = normalizeChapterUrl(getChapterUrl(chapter))
         val segments = url.toHttpUrl().pathSegments
         val payload = listOf(segments.first(), segments.last()).toJsonRequestBody()
-        val requestHeaders = headers.newBuilder()
-            .set("Next-Action", READER_TOKEN)
-            .build()
-        Log.d(DEBUG_TAG, "stage=PAGES_CURRENT_ACTION_REQUEST url=$url nextAction=$READER_TOKEN arguments=project:${segments.first()},chapter:${segments.last()}")
-        val response = client.newCall(POST(url, requestHeaders, payload)).execute()
+        Log.d(DEBUG_TAG, "stage=PAGES_CURRENT_ACTION_REQUEST url=$url arguments=project:${segments.first()},chapter:${segments.last()}")
+        val response = callAction("getPages", url, payload)
         return response.use {
             val body = it.body.string()
             Log.d(DEBUG_TAG, "stage=PAGES_CURRENT_ACTION_RESPONSE status=${it.code} contentType=${it.header("Content-Type")} bodyLength=${body.length} containsSupabase=${body.contains("supabase.aniargos.com", true)} containsPages=${body.contains("pages", true)} containsPhoto=${body.contains("photo", true)}")
-            if (!it.isSuccessful) throw IOException("Falha ao carregar páginas: HTTP ${it.code}")
             val contentType = it.header("Content-Type").orEmpty()
             if (contentType.startsWith("application/json", ignoreCase = true) &&
                 body.trim().let { value -> value.isEmpty() || value == "[]" || value == "{}" || value == "null" }
             ) {
-                clearSession()
-                throw IOException("🔐 Login necessário")
+                return null
             }
             runCatching { body.extractNextJsRsc<PagesDto>()?.toPageList() }
                 .getOrNull()
                 ?.also { pages -> Log.d(DEBUG_TAG, "stage=PAGES_CURRENT_ACTION_RESPONSE pages=${pages.size}") }
-                ?.takeIf { pages -> pages.isNotEmpty() }
-                ?: throw IOException("Resposta do Reader sem páginas.")
+                .orEmpty()
         }
+    }
+
+    // ======================== Server Actions =============================
+
+    private suspend fun callAction(name: String, pageUrl: String, payload: RequestBody, discoverFrom: String = pageUrl): Response {
+        val url = pageUrl.toHttpUrl()
+        var response = postAction(name, url, payload)
+        if (response.code == 404 && isStaleAction(404, response.use { it.body.string() })) {
+            actionIds[name] = discoverActionId(name, discoverFrom) ?: throw HttpException(404)
+            response = postAction(name, url, payload)
+        }
+        if (!response.isSuccessful) {
+            response.close()
+            throw HttpException(response.code)
+        }
+        return response
+    }
+
+    private suspend fun postAction(name: String, url: HttpUrl, payload: RequestBody): Response {
+        val actionHeaders = headersBuilder()
+            .set("Next-Action", actionIds.getValue(name))
+            .build()
+        return client.post(url, actionHeaders, Fetch.XHR.from(url.toString()), payload, ensureSuccess = false)
+    }
+
+    private suspend fun discoverActionId(name: String, pageUrl: String): String? {
+        val html = client.get(pageUrl, headers, Fetch.DOCUMENT).use { it.body.string() }
+        for (chunk in chunkNames(html)) {
+            val js = client.get("$baseUrl/_next/static/chunks/$chunk", headers, Fetch.SCRIPT).use { it.body.string() }
+            actionIdIn(js, name)?.let { return it }
+        }
+        return null
+    }
+
+    // ======================== Login =============================
+
+    private suspend fun ensureSession() = clientHasAccessToken() || login()
+
+    // false when there is no e-mail and password to log in with
+    private suspend fun login(): Boolean {
+        if (email.isBlank() || password.isBlank()) return false
+        val body = callAction("login", "$baseUrl/login", listOf(email, password).toJsonRequestBody()).use { it.body.string() }
+        if (!loggedIn(body)) throw HttpException(401)
+        return true
     }
 
     private fun normalizeChapterUrl(url: String): String {
@@ -364,48 +308,8 @@ abstract class ArgosComics :
     }
 
     companion object {
-        private const val SEARCH_TOKEN = "409ae74984efeccf922164e02e3bcd60d8b0107638"
-        private const val CHAPTERS_TOKEN = "606c13e60309ce062fade63ac2f1cc68bbc5dc25f4"
-        private const val DETAILS_TOKEN = "60e89cb5963d6bb1b61383872fbfb4cc2726925dd8"
         private const val DEBUG_TAG = "ARGOS_COMICS_DEBUG"
-        private const val READER_TOKEN = "6062e8559136ee33cc337e5520fb09950c3dced65e"
-        private val AUTH_CLEANUP_SCRIPT = """
-            (() => {
-              if (window.__argosAuthCleanupInstalled) return;
-              window.__argosAuthCleanupInstalled = true;
-              const removeAds = () => {
-                document.querySelectorAll(
-                  'iframe[src*="pubadx.one"], iframe[src*="googletagmanager.com"], [src*="platform.pubadx.one"], [class*="pubadx"], [id*="pubadx"], [data-ad-network="pubadx"], [data-ad-provider="pubadx"], [data-ad-network="PubADX"]'
-                ).forEach((element) => element.remove());
-                document.querySelectorAll('a[href*="pubadx.one"], [onclick*="pubadx.one"]').forEach((element) => element.remove());
-              };
-              removeAds();
-              if (document.documentElement) {
-                new MutationObserver(removeAds).observe(document.documentElement, { childList: true, subtree: true });
-              }
-              window.open = (url) => {
-                if (!url) return null;
-                try {
-                  const target = new URL(url, location.href);
-                  if (target.hostname === 'platform.pubadx.one' || target.hostname.endsWith('.pubadx.one')) return null;
-                  location.href = target.href;
-                  return window;
-                } catch (_) {
-                  return null;
-                }
-              };
-              document.addEventListener('click', (event) => {
-                const link = event.target.closest && event.target.closest('a[href]');
-                if (!link) return;
-                try {
-                  const target = new URL(link.href, location.href);
-                  if (target.hostname === 'platform.pubadx.one' || target.hostname.endsWith('.pubadx.one')) {
-                    event.preventDefault();
-                    event.stopImmediatePropagation();
-                  }
-                } catch (_) {}
-              }, true);
-            })();
-        """.trimIndent()
+        private const val EMAIL_PREF = "email"
+        private const val PASSWORD_PREF = "password"
     }
 }
