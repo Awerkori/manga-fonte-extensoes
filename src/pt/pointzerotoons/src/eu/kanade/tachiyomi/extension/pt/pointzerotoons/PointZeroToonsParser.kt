@@ -1,8 +1,15 @@
 package eu.kanade.tachiyomi.extension.pt.pointzerotoons
 
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import okhttp3.HttpUrl
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+
+internal data class PointZeroGenre(
+    val name: String,
+    val value: String,
+)
 
 internal data class PointZeroCard(
     val title: String,
@@ -58,15 +65,36 @@ internal fun parsePointZeroChapters(document: Document): List<PointZeroChapter> 
     }
     .distinctBy { it.url }
 
+internal fun parsePointZeroGenres(document: Document): List<PointZeroGenre> = document
+    .select(".inkra-pillgroup--genres label:has(input[name=genre])")
+    .mapNotNull { label ->
+        val value = label.selectFirst("input[name=genre]")?.attr("value")?.trim().orEmpty()
+        val name = label.selectFirst("span")?.text()?.trim().orEmpty().ifBlank { label.text().trim() }
+        if (value.isBlank() || name.isBlank()) return@mapNotNull null
+        PointZeroGenre(name, value)
+    }
+    .distinctBy { it.value }
+
+internal fun sanitizePointZeroFilterData(data: JsonElement?): JsonElement? = data?.takeUnless { it is JsonNull }
+
 internal fun pointZeroCatalogPath(page: Int): String = if (page <= 1) "/manga/" else "/manga/page/$page/"
 
 internal fun pointZeroSearchUrl(builder: HttpUrl.Builder, page: Int): HttpUrl.Builder = builder.apply {
-    build().queryParameter("title")?.let { query ->
+    val current = build()
+    current.queryParameter("title")?.let { query ->
         removeAllQueryParameters("title")
         setQueryParameter("s", query)
     }
-    if (build().queryParameter("order") == "update") {
+    if (current.queryParameter("order") == "update") {
         setQueryParameter("order", "updated")
+    }
+    if (current.queryParameter("genre[]") != null) {
+        val selectedGenre = current.queryParameterValues("genre[]")
+            .firstOrNull { !it.isNullOrBlank() && !it.startsWith("-") }
+        removeAllQueryParameters("genre[]")
+        if (!selectedGenre.isNullOrBlank()) {
+            setQueryParameter("genre", selectedGenre)
+        }
     }
     if (page > 1) {
         encodedPath(pointZeroCatalogPath(page))

@@ -1,12 +1,12 @@
 package eu.kanade.tachiyomi.extension.pt.pointzerotoons
 
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.jsoup.Jsoup
 
 class PointZeroSearchTest {
     private fun request(query: String, page: Int = 1, order: String = "update") = pointZeroSearchUrl(
@@ -94,5 +94,13 @@ class PointZeroSearchTest {
         assertTrue(first.intersect(second).isEmpty())
         assertTrue(hasPointZeroNextPage(document))
         assertEquals("https://kitsuneyako.com/manga/page/3/?s=Jogo", document.selectFirst("a.next.page-numbers")!!.absUrl("href"))
+    }
+
+    @Test fun convertsMangaThemesiaGenreArrayToInkraGenreParam() {
+        val input = "https://kitsuneyako.com/manga/?genre%5B%5D=acao&genre%5B%5D=-drama&order=update".toHttpUrl()
+        val result = pointZeroSearchUrl(input.newBuilder(), 1).build()
+        assertEquals("acao", result.queryParameter("genre"))
+        assertTrue(result.queryParameterValues("genre[]").isEmpty())
+        assertEquals("updated", result.queryParameter("order"))
     }
 }

@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "Manga Stop"
-    versionCode = 48
+    versionCode = 49
     contentWarning = ContentWarning.MIXED
     libVersion = "1.6"
 
@@ -20,4 +20,21 @@ keiyoushi {
         path("/leitor/..*")
         path("/manga/..*")
     }
+}
+
+android {
+    sourceSets.named("test") {
+        kotlin.directories.add("test")
+        resources.directories.add("test/fixtures")
+    }
+}
+
+tasks.matching { it.name.startsWith("ksp") && it.name.contains("UnitTest") }.configureEach {
+    enabled = false
+}
+
+dependencies {
+    testImplementation(libs.junit)
+    testImplementation(libs.bundles.common)
+    testImplementation(libs.tachiyomi.lib.v16)
 }

@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.extension.pt.mangastop
 
-import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -167,20 +166,7 @@ abstract class MangaStop : KeiSource() {
         return genres.toJsonElement()
     }
 
-    override fun getFilterList(data: JsonElement?): FilterList {
-        val genres = data?.parseAs<List<GenreDto>>()
-        return FilterList(
-            buildList<Filter<*>> {
-                add(Filter.Header("Os filtros não se aplicam à busca por texto"))
-                add(SortFilter())
-                add(TypeFilter())
-                if (genres != null) {
-                    add(Filter.Header("Com um gênero selecionado, a ordenação é ignorada"))
-                    add(GenreFilter(genres))
-                }
-            },
-        )
-    }
+    override fun getFilterList(data: JsonElement?): FilterList = buildMangaStopFilterList(data)
 
     companion object {
         private const val PER_PAGE = "24"

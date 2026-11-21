@@ -1,6 +1,10 @@
 package eu.kanade.tachiyomi.extension.pt.mangastop
 
 import eu.kanade.tachiyomi.source.model.Filter
+import eu.kanade.tachiyomi.source.model.FilterList
+import keiyoushi.utils.parseAs
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 
 internal open class SelectFilter(
     name: String,
@@ -37,3 +41,18 @@ internal class GenreFilter(genres: List<GenreDto>) :
         "Gênero",
         listOf("Todos" to "") + genres.map { it.name to it.slug },
     )
+
+internal fun buildMangaStopFilterList(data: JsonElement?): FilterList {
+    val genres = data?.takeUnless { it is JsonNull }?.parseAs<List<GenreDto>>()
+    return FilterList(
+        buildList<Filter<*>> {
+            add(Filter.Header("Os filtros não se aplicam à busca por texto"))
+            add(SortFilter())
+            add(TypeFilter())
+            if (genres != null) {
+                add(Filter.Header("Com um gênero selecionado, a ordenação é ignorada"))
+                add(GenreFilter(genres))
+            }
+        },
+    )
+}

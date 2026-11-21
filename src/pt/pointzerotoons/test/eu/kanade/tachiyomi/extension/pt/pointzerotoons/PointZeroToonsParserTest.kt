@@ -1,7 +1,12 @@
 package eu.kanade.tachiyomi.extension.pt.pointzerotoons
 
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -75,5 +80,38 @@ class PointZeroToonsParserTest {
 
         assertEquals(listOf("Capítulo 22", "Obra — Capítulo 01"), chapters.map { it.name })
         assertEquals(listOf("/obra-capitulo-22/", "/obra-capitulo-01/"), chapters.map { it.url.removePrefix("https://kitsuneyako.com") })
+    }
+
+    @Test
+    fun parsesInkraGenresAndSkipsEmptyDefaultOption() {
+        val html = checkNotNull(javaClass.getResourceAsStream("/inkra/filters.html")).bufferedReader().use { it.readText() }
+        val genres = parsePointZeroGenres(Jsoup.parse(html, "https://kitsuneyako.com/manga/"))
+
+        assertTrue(genres.size > 100)
+        assertTrue(genres.none { it.value.isBlank() })
+        assertEquals(PointZeroGenre("4-koma", "4-koma"), genres.first())
+        assertTrue(genres.any { it == PointZeroGenre("Ação", "acao") })
+    }
+
+    @Test
+    fun returnsEmptyListWhenGenreSelectorIsMissingInsteadOfNull() {
+        val document = Jsoup.parse("<html><body><div>Project not found</div></body></html>")
+        assertTrue(parsePointZeroGenres(document).isEmpty())
+    }
+
+    @Test
+    fun ignoresStaleJsonNullInFilterCache() {
+        assertNull(sanitizePointZeroFilterData(null))
+        assertNull(sanitizePointZeroFilterData(JsonNull))
+
+        val cachedGenres = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("name", "Ação")
+                    put("value", "acao")
+                },
+            )
+        }
+        assertEquals(cachedGenres, sanitizePointZeroFilterData(cachedGenres))
     }
 }
