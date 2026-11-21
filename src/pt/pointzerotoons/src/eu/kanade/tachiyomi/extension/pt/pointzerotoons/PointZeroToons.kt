@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
+import kotlinx.serialization.json.JsonElement
 import okhttp3.OkHttpClient
 import org.jsoup.nodes.Document
 
@@ -42,6 +43,16 @@ abstract class PointZeroToons : MangaThemesia() {
             }
         }
     }
+
+    override fun parseGenres(document: Document): List<GenreData> {
+        val inkraGenres = parsePointZeroGenres(document)
+        if (inkraGenres.isNotEmpty()) {
+            return inkraGenres.map { GenreData(it.name, it.value) }
+        }
+        return super.parseGenres(document).orEmpty()
+    }
+
+    override fun getFilterList(data: JsonElement?): FilterList = super.getFilterList(sanitizePointZeroFilterData(data))
 
     override fun searchMangaUrl(page: Int, query: String, filters: FilterList) = pointZeroSearchUrl(super.searchMangaUrl(page, query, filters), page)
 
