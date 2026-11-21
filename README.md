@@ -1,132 +1,122 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ProjectNox-org/.github/main/assets/brand/nox-emblem.webp" alt="Emblema oficial do Project Nox" width="80" height="80">
+</p>
+
 # Project Nox · Código-fonte das Extensões de Mangá
 
-Repositório central de desenvolvimento, código-fonte em Kotlin e automação de compilação das extensões de mangá do **Project Nox** para **Mihon e forks**.
-
----
+Código-fonte em Kotlin e automação de compilação das extensões de mangá do **Project Nox** para **Mihon e forks**.
 
 > [!IMPORTANT]
-> **Procurando apenas instalar as extensões no seu aplicativo?**  
-> Este repositório destina-se a desenvolvedores e contém o código-fonte em Kotlin para desenvolvimento e manutenção. Para instalar ou atualizar os catálogos prontos no seu leitor, utilize o repositório de distribuição oficial:  
-> ➡️ [**Project Nox · Extensões de Mangá (Distribuição)**](https://github.com/ProjectNox-org/manga-extensoes)
+> **Quer apenas instalar as extensões no seu leitor?**
+> Este repositório guarda somente o **código-fonte** usado por desenvolvedores. As extensões prontas para instalar ficam em outro repositório:
+> [**Project Nox · Extensões de Mangá (`manga-extensoes`)**](https://github.com/ProjectNox-org/manga-extensoes)
+>
+> Para pedir uma extensão nova ou relatar um problema, use a [Central de Pedidos](https://github.com/ProjectNox-org/project-nox-requests) e acompanhe no [Tracker](https://projectnox-org.github.io/project-nox-tracker/).
 
----
+## Sobre o projeto
 
-## 🎯 Sobre o Projeto
+O ecossistema de mangás do **Project Nox** mantém extensões ativas com foco na comunidade brasileira (PT-BR), a partir da base upstream do **Keiyoushi / Tachiyomi**:
 
-O ecossistema de mangás do **Project Nox** mantém fontes ativas e atualizadas com foco na comunidade brasileira (PT-BR) e fontes selecionadas. As principais responsabilidades deste projeto incluem:
+- **Desenvolvimento e manutenção:** parsers em Kotlin baseados na API `KeiSource`, com atualização de seletores, tratamento de requisições e compatibilidade com Mihon e forks.
+- **Compilação e validação:** builds modulares em Gradle via GitHub Actions, com verificação de configuração, testes unitários do núcleo e empacotamento em APKs assinados.
+- **Sincronização upstream:** incorporação contínua de melhorias do Keiyoushi preservando as extensões protegidas e modificações do Project Nox listadas em `.github/nox-protected.txt`.
+- **Publicação automática:** alterações na branch `main` compilam os módulos afetados e publicam os APKs e os catálogos (`index.pb`, `index.json` e `index.min.json`) em [`manga-extensoes`](https://github.com/ProjectNox-org/manga-extensoes).
 
-- **Desenvolvimento e Manutenção Contínua:** Implementação de parsers em Kotlin baseados na API de extensões para **Mihon e forks**, contornando proteções anti-bot, atualizando seletores CSS/JSON e garantindo estabilidade no carregamento de capítulos.
-- **Pipeline de Integração Contínua (CI):** Compilação automatizada via Gradle e GitHub Actions, com validação de tipos, testes sintéticos de catalogação e empacotamento em APKs assinados.
-- **Sincronização Upstream com Guardião de Fontes:** Mecanismo autônomo que importa melhorias da base global upstream enquanto protege de forma determinística as fontes e customizações exclusivas desenvolvidas pelo Project Nox.
-- **Publicação Automática:** Cada alteração aprovada na branch principal compila os pacotes e publica os novos artefatos e o índice Protobuf/JSON diretamente no repositório [`manga-extensoes`](https://github.com/ProjectNox-org/manga-extensoes).
+## Estrutura do repositório
 
----
+| Caminho | Finalidade |
+|---|---|
+| `src/` | Extensões organizadas por idioma (`pt/`, `all/`, entre outros). |
+| `lib/` | Bibliotecas compartilhadas (deobfuscação JS, decodificação de imagens, Cronet, etc.). |
+| `lib-multisrc/` | Temas multisource reutilizados por várias fontes (Madara, MangaThemesia, FMReader, etc.). |
+| `core/` | Utilitários centrais (`keiyoushi.utils`, `keiyoushi.network`) e testes unitários. |
+| `common/`, `compiler/`, `lint-rules/` | Infraestrutura comum, geração de código via KSP e regras de lint. |
+| `.github/` | Workflows (`build_push.yml`, `sync_upstream.yml`), scripts de publicação e `nox-protected.txt`. |
+| `ext-bootstrap.py`, `build.gradle.kts`, `settings.gradle.kts` | Script para criar extensões e configuração modular do Gradle. |
 
-## 🏗️ Estrutura do Repositório
-
-O projeto é organizado de forma modular em Gradle:
-
-```
-├── src/                    # Extensões separadas por idioma
-│   ├── pt/                 # Extensões em Português (Brasil) — foco principal
-│   ├── all/                # Extensões multisource globais
-│   └── ...                 # Outros idiomas mantidos
-├── lib/                    # Bibliotecas auxiliares compartilhadas entre extensões
-├── lib-multisrc/           # Temas multisource compartilhados (Madara, MangaThemesia, etc.)
-├── core/                   # Utilitários centrais de catalogação e testes unitários
-├── .github/
-│   ├── workflows/          # Workflows de CI (build_push.yml, sync_upstream.yml)
-│   └── scripts/            # Scripts em Python para geração do catálogo e sincronização
-└── build.gradle.kts        # Configurações globais de compilação Gradle
-```
-
----
-
-## 💻 Como Compilar e Desenvolver Localmente
+## Desenvolvimento e compilação
 
 ### Pré-requisitos
-- **JDK 17** ou superior instalado e configurado no ambiente (`JAVA_HOME`).
-- **Android SDK** com Build-Tools e Platform-Tools atualizados (Android SDK 30+).
 
-### Clonar o projeto
+**Ferramentas necessárias:**
+
+- [JDK 17+](https://adoptium.net/) configurado no `JAVA_HOME` (exigido pelo Gradle e pelo Android Gradle Plugin).
+- [Android SDK](https://developer.android.com/studio) com Platform-Tools e Build-Tools (recomendado via Android Studio).
+
+**Configurações do projeto** (`gradle/kei.versions.toml`):
+
+- `compileSdk` e `targetSdk`: `37` | `minSdk`: `26` | compatibilidade de bytecode Java: `11`.
+
+### Clonar o repositório
+
 ```bash
 git clone https://github.com/ProjectNox-org/manga-fonte-extensoes.git
 cd manga-fonte-extensoes
 ```
 
-### Comandos de Compilação
+Como o repositório possui mais de mil módulos, consulte em [`CONTRIBUTING.md`](CONTRIBUTING.md) as instruções de clone parcial e filtragem em `settings.gradle.kts` para agilizar o trabalho local.
 
-Para compilar uma extensão específica em modo debug:
+### Compilar, testar e formatar
+
+Os exemplos abaixo usam o módulo real `:src:pt:baozinho`. Substitua `:src:pt:baozinho` (e o caminho correspondente) pelo módulo da extensão em que estiver trabalhando:
+
 ```bash
-# Exemplo: compilar uma extensão em português
-./gradlew :src:pt:<nome-da-extensao>:assembleDebug
-```
-O arquivo APK compilado será gerado em:  
-`src/pt/<nome-da-extensao>/build/outputs/apk/debug/`
+# Compilar APK de debug (saída em src/pt/baozinho/build/outputs/apk/debug/)
+./gradlew :src:pt:baozinho:assembleDebug
 
-### Verificação de Qualidade e Formatação
-```bash
-# Executar testes unitários do núcleo
-./gradlew test
+# Lint de release no módulo alterado (ou em :lib:<nome> / :lib-multisrc:<tema>)
+./gradlew :src:pt:baozinho:lintRelease
 
-# Verificar e aplicar a formatação padrão do código (Spotless)
+# Testes unitários do núcleo (há também testes em :lib-multisrc:aurora:testDebugUnitTest)
+./gradlew :core:testDebugUnitTest
+
+# Aplicar ou verificar formatação padrão (Spotless / ktlint)
 ./gradlew spotlessApply
+./gradlew spotlessCheck
 ```
 
----
+Consulte [`CONTRIBUTING.md`](CONTRIBUTING.md) e [`AGENTS.md`](AGENTS.md) para detalhes da API `KeiSource`, criação de fontes com `ext-bootstrap.py` e convenções de código.
 
-## 🤝 Como Contribuir
+## Como contribuir
 
-Contribuições da comunidade são muito bem-vindas:
+1. **Verifique pedidos existentes:** consulte a [Central de Pedidos](https://github.com/ProjectNox-org/project-nox-requests) antes de começar.
+2. **Crie uma branch a partir da `main`:** use um nome descritivo (ex.: `fix/baozinho` ou `feat/nova-fonte`).
+3. **Valide antes de enviar:** teste a extensão em emulador ou dispositivo, atualize `versionCode` (ou `baseVersionCode` em temas) e execute `spotlessApply` e `lintRelease` no módulo alterado.
+4. **Envie o Pull Request aqui:** abra o PR exclusivamente em [`ProjectNox-org/manga-fonte-extensoes`](https://github.com/ProjectNox-org/manga-fonte-extensoes) — nunca nos repositórios upstream.
 
-1. **Consulte a Central de Pedidos:** Antes de iniciar o desenvolvimento, verifique na [Central de Pedidos](https://github.com/ProjectNox-org/project-nox-requests) se já existe uma demanda aberta ou em andamento.
-2. **Crie uma branch semântica:** Baseie-se na branch `main` e nomeie de forma clara (ex: `fix/nome-da-fonte` ou `feat/nova-fonte`).
-3. **Mantenha os padrões técnicos:** Use seletores estáveis, evite dependências desnecessárias e garanta que `./gradlew spotlessApply` seja executado antes do commit.
-4. **Envie seu Pull Request:** Descreva as alterações realizadas, os testes feitos no emulador ou dispositivo físico e anexe evidências se apropriado.
+## Suporte e solicitações
 
----
+- **Central de Pedidos ([`project-nox-requests`](https://github.com/ProjectNox-org/project-nox-requests)):** abrir pedidos de novas extensões e relatar fontes com erro.
+- **Tracker ([Project Nox Tracker](https://projectnox-org.github.io/project-nox-tracker/)):** consultar e acompanhar o status das solicitações.
+- **Issues técnicas ([`issues`](https://github.com/ProjectNox-org/manga-fonte-extensoes/issues)):** dúvidas de desenvolvimento, compilação e manutenção neste repositório.
 
-## 🛠️ Suporte e Reporte de Erros
+## Projetos relacionados
 
-Se encontrar uma extensão que parou de carregar imagens, apresentou erro de decodificação ou sofreu alteração de layout no site de origem:
+- [**Project Nox · Extensões de Mangá**](https://github.com/ProjectNox-org/manga-extensoes) — Distribuição oficial de extensões prontas para Mihon e forks.
+- [**Project Nox · Código-fonte das Extensões de Anime**](https://github.com/ProjectNox-org/anime-fonte-extensoes) — Código-fonte e extractors das extensões de anime.
+- [**Project Nox · Extensões de Anime**](https://github.com/ProjectNox-org/anime-extensoes) — Distribuição oficial das extensões de anime para Aniyomi e forks.
 
-- 🎫 **Abrir solicitação oficial:** [Project Nox · Central de Pedidos](https://github.com/ProjectNox-org/project-nox-requests)
-- 📊 **Acompanhar status em tempo real:** [Project Nox · Tracker](https://projectnox-org.github.io/project-nox-tracker/)
+## Créditos e atribuições
 
----
+- **Felipe GFA** ([@FelipeGFA](https://github.com/FelipeGFA)): concepção e engenharia do projeto, criação e manutenção de dezenas de extensões da comunidade brasileira (como Nexus, Manhastro, MangaLivre, Yomu, LycanToons, PlumaComics e MangoTheme), mecanismos de sincronização upstream e pipeline do catálogo Protobuf.
+- **Keiyoushi** ([@keiyoushi](https://github.com/keiyoushi)): base upstream e arquitetura de referência do ecossistema de extensões.
+- **Javier Tomás** e demais colaboradores históricos do ecossistema open-source (Tachiyomi/Mihon) e do Project Nox.
 
-## 🔗 Projetos Relacionados
+## Licenças e informações legais
 
-- 📦 [**Project Nox · Extensões de Mangá**](https://github.com/ProjectNox-org/manga-extensoes) — Repositório de distribuição (APKs compilados e índice para o aplicativo).
-- 🎬 [**Project Nox · Extensões de Anime**](https://github.com/ProjectNox-org/anime-extensoes) — Catálogo de extensões de anime para Aniyomi e forks.
-- 💻 [**Project Nox · Código-fonte das Extensões de Anime**](https://github.com/ProjectNox-org/anime-fonte-extensoes) — Código-fonte e extractors de vídeo.
-- 🌐 [**Project Nox · Plataforma Web de Mangá**](https://github.com/ProjectNox-org/project-nox-manga) — Leitor web oficial do Project Nox.
-- ⚙️ [**Project Nox · Importer**](https://github.com/ProjectNox-org/project-nox-importer) — Serviço de ingestão contínua de catálogo 24/7.
+Este repositório distribui um trabalho combinado sob a **GNU Affero General Public License v3.0** (`AGPL-3.0-only`), preservando os direitos e avisos das bases upstream:
 
----
+- **Código upstream (Keiyoushi / Tachiyomi):** licenciado sob a [Apache License 2.0](LICENSE-APACHE).
+- **Contribuições do Project Nox:** licenciadas sob a [GNU AGPL v3.0](LICENSE) (`AGPL-3.0-only`).
+- **Trabalho combinado:** distribuído sob GNU AGPL v3.0 em compatibilidade com a Apache 2.0, preservando os avisos de copyright e atribuições originais, sem reivindicação de titularidade exclusiva sobre código de terceiros.
+- **Sincronização e governança:** atualizações upstream são incorporadas downstream mantendo créditos e licenças originais; o desenvolvimento do Project Nox permanece exclusivo à organização `ProjectNox-org`, sem envio de PRs ao upstream.
+- **Interação remota de rede (AGPLv3, Seção 13):** conforme os termos da licença, quem operar versão modificada acessível pela rede com interação remota de usuários deve disponibilizar o Código-Fonte Correspondente (*Corresponding Source*).
+- **Identidade e marca (AGPLv3, Seção 7(e) / Apache 2.0, Seção 6):** as licenças de software não concedem direito de uso dos nomes ou marcas "Project Nox", "Awerkori" ou de terceiros para sugerir endosso ou representação oficial.
+- **Isenção de responsabilidade:** software livre para interoperabilidade técnica; o projeto não hospeda nem armazena conteúdos protegidos por direitos autorais.
 
-## 🌟 Créditos e Atribuições
+Consulte [`NOTICE`](NOTICE) para o inventário completo de atribuições e licenças específicas de terceiros (incluindo fontes tipográficas em `lib-multisrc/manhuarm/` e Cronet Runtime).
 
-O **Project Nox** expressa seu reconhecimento e agradecimento a todos que tornaram este projeto possível:
-
-- **Felipe GFA** ([@FelipeGFA](https://github.com/FelipeGFA)): Contribuição fundamental na concepção e engenharia do projeto, responsável pela criação e manutenção de dezenas de extensões da comunidade brasileira (Nexus, Manhastro, MangaLivre, Yomu, LycanToons, PlumaComics, MangoTheme, entre outras), pela implementação dos mecanismos avançados de sincronização upstream e pelo pipeline de publicação do catálogo Protobuf.
-- **Keiyoushi** ([@keiyoushi](https://github.com/keiyoushi)): Pela base upstream e arquitetura de referência do ecossistema de extensões de leitura.
-- **Javier Tomás** e colaboradores históricos do ecossistema open-source de mangás.
-
----
-
-## ⚖️ Licença e Copyright
-
-O trabalho combinado deste repositório é disponibilizado sob os termos da **GNU Affero General Public License versão 3.0** (`AGPL-3.0-only`), respeitando a compatibilidade e preservando integralmente os direitos dos autores originais:
-
-- **Código Upstream (Keiyoushi / Tachiyomi):** Licenciado sob a [Apache License 2.0](LICENSE-APACHE). Todos os avisos de direitos autorais originais foram integralmente mantidos.
-- **Contribuições Originais do Project Nox:** Licenciadas sob a [GNU AGPL v3.0](LICENSE) (`AGPL-3.0-only`).
-- **Trabalho Combinado:** Distribuído sob a **GNU AGPL v3.0** em virtude da compatibilidade unidirecional Apache 2.0 → AGPLv3.
-- **Preservação de Titularidade e Atribuição:** A inclusão de código upstream em trabalho combinado compatível não transfere a titularidade ao Project Nox nem revoga as obrigações de atribuição da Apache 2.0. O Project Nox não declara nem reivindica direitos exclusivos sobre código criado por terceiros, respeitando os componentes e licenças de cada módulo.
-
-Consulte o arquivo [NOTICE](NOTICE) para o inventário completo de atribuições, componentes incorporados e diretrizes jurídicas.
-
-```
+```text
 Copyright 2015 Javier Tomás
 Copyright (c) Keiyoushi Contributors
 Copyright (c) Felipe GFA
@@ -135,16 +125,3 @@ Copyright (C) 2026 Project Nox Contributors & Awerkori
 Licensed under the GNU Affero General Public License, Version 3.0 (for Project Nox contributions
 and combined work) and the Apache License, Version 2.0 (for upstream Keiyoushi components).
 ```
-
-### 🔄 Sincronização Upstream e Governança
-- O Project Nox sincroniza periodicamente atualizações do ecossistema Keiyoushi mantendo os créditos e licenças Apache 2.0 originais intactos.
-- Todo o ciclo de vida, melhorias e extensões específicas do Project Nox são mantidos exclusivamente dentro da organização `ProjectNox-org`. Nenhum Pull Request é aberto ou enviado para os repositórios upstream do Keiyoushi, assegurando preservação da autonomia do projeto e estabilidade da sincronização a jusante.
-
-### 📌 Interação Remota de Rede (GNU AGPLv3 Seção 13)
-O Project Nox adota oficialmente a licença **GNU AGPL versão 3.0**. Em estrita conformidade com a Seção 13 da AGPLv3, caso uma versão modificada deste software seja operada em servidores ou instâncias acessíveis através de uma rede de computadores com interação remota de usuários, o operador deve oferecer a todos esses usuários remotos a oportunidade de obter o Código-Fonte Correspondente (Corresponding Source) da versão modificada em execução, sem custos e através de meio habitual de disponibilização de software em rede.
-
-### 🛡️ Proteção de Identidade e Marca (AGPLv3 Seção 7(e))
-A concessão das licenças de software livre refere-se estritamente ao código. Ela **não concede** autorização ou licença de uso de marcas, nomes ou logotipos oficiais do "Project Nox", de "Awerkori" ou de terceiros para insinuar endosso, homologação ou representação oficial do projeto sem consentimento prévio por escrito.
-
-### ⚖️ Isenção de Responsabilidade
-O **Project Nox** desenvolve exclusivamente ferramentas de software livre para interoperabilidade técnica e pesquisa de agregação programática. O projeto não hospeda, gerencia nem armazena conteúdos protegidos por direitos autorais em seus repositórios de código. As extensões realizam apenas requisições diretas a fontes públicas da web.
