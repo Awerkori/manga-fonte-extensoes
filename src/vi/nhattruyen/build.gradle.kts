@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "NhatTruyen"
-    versionCode = 22
+    versionCode = 23
     contentWarning = ContentWarning.SAFE
     libVersion = "1.6"
     theme = "wpcomics"
@@ -14,5 +14,9 @@ keiyoushi {
     source {
         lang = "vi"
         baseUrl = "https://nhattruyenqq.com"
+    }
+
+    deeplink {
+        path("/truyen-tranh/..*")
     }
 }

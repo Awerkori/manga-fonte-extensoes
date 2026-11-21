@@ -16,7 +16,7 @@
         "src/pt/mangasbrasuka",
         "src/pt/mugiwarasoficial"
       ],
-      "upstream_ref": "ef952a64df831c33c29c276d9c283b4cd7633ce1"
+      "upstream_ref": "4555bd313975cbd0357cd40a8a5ca77f317c5bfc"
     },
     "catharsis": {
       "units": [
@@ -34,7 +34,7 @@
     },
     "madara": {
       "patch_base": "f1bd88dacd89dfe644369c397efedf79965bf4c0",
-      "reason": "[Errno 2] No such file or directory: '/tmp/nox-multisrc-proof-awlxmcbq/repo/src/all/fastestmanga/build.gradle.kts'",
+      "reason": "[Errno 2] No such file or directory: '/tmp/nox-multisrc-proof-x7pmebzd/repo/src/all/fastestmanga/build.gradle.kts'",
       "units": [
         "src/all/allporncomicsco",
         "src/all/comicsvalley",
@@ -284,7 +284,7 @@
         "src/vi/truyentuoitho",
         "src/zh/bakamh"
       ],
-      "upstream_ref": "ef952a64df831c33c29c276d9c283b4cd7633ce1"
+      "upstream_ref": "4555bd313975cbd0357cd40a8a5ca77f317c5bfc"
     }
   }
 }
