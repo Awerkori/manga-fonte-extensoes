@@ -1,10 +1,12 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ProjectNox-org/.github/main/assets/brand/nox-emblem.webp" alt="Emblema oficial do Project Nox" width="80" height="80">
+  <img src="https://raw.githubusercontent.com/ProjectNox-org/.github/main/assets/brand/nox-emblem.webp" alt="Emblema oficial do Project Nox" width="96" />
 </p>
 
-# Project Nox · Código-fonte das Extensões de Mangá
+<h1 align="center">Project Nox · Código-fonte das Extensões de Mangá</h1>
 
-Código-fonte em Kotlin e automação de compilação das extensões de mangá do **Project Nox** para **Mihon e forks**.
+<p align="center">
+  Código-fonte em Kotlin e automação de compilação para <strong>Mihon e forks</strong> (base Keiyoushi / Tachiyomi).
+</p>
 
 > [!IMPORTANT]
 > **Quer apenas instalar as extensões no seu leitor?**
