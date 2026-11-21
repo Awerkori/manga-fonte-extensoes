@@ -4,7 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class ComicSeriesLd(
+class ComicSeriesLd(
     @SerialName("@type") val type: String = "",
     val name: String = "",
     val description: String = "",
@@ -14,12 +14,12 @@ data class ComicSeriesLd(
 )
 
 @Serializable
-data class AuthorLd(
+class AuthorLd(
     val name: String = "",
 )
 
 @Serializable
-data class SearchResultDto(
-    val label: String = "",
-    val url: String = "",
+class SearchResultDto(
+    val label: String,
+    val url: String,
 )
