@@ -16,7 +16,6 @@ import kotlinx.serialization.json.JsonElement
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
-import java.io.IOException
 
 @Source
 abstract class Fliptru : KeiSource() {
@@ -118,8 +117,7 @@ abstract class Fliptru : KeiSource() {
             .firstOrNull { it.type == "ComicSeries" }
 
         val title = ld?.name?.ifBlank { null }
-            ?: document.selectFirst("h1")?.text()
-            ?: throw IllegalStateException("Empty title for $mangaUrl")
+            ?: document.selectFirst("h1")!!.text()
 
         return SManga.create().apply {
             url = mangaUrl
@@ -140,8 +138,10 @@ abstract class Fliptru : KeiSource() {
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val response = client.get(baseUrl + chapter.url)
+        // An age-restricted chapter sends the reader to the login page.
         if (response.request.url.encodedPath.startsWith("/users/")) {
-            throw IOException("Este capítulo exige login (restrito por idade)")
+            response.close()
+            return emptyList()
         }
         val document = response.asJsoup()
         return parsePageUrls(document)
