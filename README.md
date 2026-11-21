@@ -10,8 +10,8 @@
 
 > [!IMPORTANT]
 > **Quer apenas instalar as extensões no seu leitor?**
-> Este repositório guarda somente o **código-fonte** usado por desenvolvedores. As extensões prontas para instalar ficam em outro repositório:
-> [**Project Nox · Extensões de Mangá (`manga-extensoes`)**](https://github.com/ProjectNox-org/manga-extensoes)
+> Você **não precisa baixar este repositório** — ele guarda apenas o código-fonte usado por desenvolvedores. As extensões prontas para instalar ficam no repositório oficial de distribuição:
+> [**Project Nox · Extensões de Mangá**](https://github.com/ProjectNox-org/manga-extensoes) (`manga-extensoes`)
 >
 > Para pedir uma extensão nova ou relatar um problema, use a [Central de Pedidos](https://github.com/ProjectNox-org/project-nox-requests) e acompanhe no [Tracker](https://projectnox-org.github.io/project-nox-tracker/).
 
@@ -90,7 +90,6 @@ Consulte [`CONTRIBUTING.md`](CONTRIBUTING.md) e [`AGENTS.md`](AGENTS.md) para de
 
 - **Central de Pedidos ([`project-nox-requests`](https://github.com/ProjectNox-org/project-nox-requests)):** abrir pedidos de novas extensões e relatar fontes com erro.
 - **Tracker ([Project Nox Tracker](https://projectnox-org.github.io/project-nox-tracker/)):** consultar e acompanhar o status das solicitações.
-- **Issues técnicas ([`issues`](https://github.com/ProjectNox-org/manga-fonte-extensoes/issues)):** dúvidas de desenvolvimento, compilação e manutenção neste repositório.
 
 ## Projetos relacionados
 
