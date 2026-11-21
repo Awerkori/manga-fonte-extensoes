@@ -15,7 +15,6 @@ import keiyoushi.utils.parseAs
 import kotlinx.serialization.json.JsonElement
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.jsoup.nodes.Document
 import java.io.IOException
 
@@ -103,7 +102,13 @@ abstract class Fliptru : KeiSource() {
         val document = client.get(baseUrl + manga.url).asJsoup()
         return SMangaUpdate(
             manga = parseMangaDetails(document, manga.url),
-            chapters = parseChapterList(document),
+            chapters = fetchAllChapters(document) { client.get(baseUrl + it).asJsoup() }.map {
+                SChapter.create().apply {
+                    url = it.path
+                    name = it.name
+                    chapter_number = it.number
+                }
+            },
         )
     }
 
@@ -133,38 +138,13 @@ abstract class Fliptru : KeiSource() {
         }
     }
 
-    private val chapterSlugRegex = Regex("/comic/[^/]+/([^/?#]+)")
-
-    private fun parseChapterList(document: Document): List<SChapter> {
-        return document.select("#chapterListContainer .chapter-list-item a[href]")
-            .mapNotNull { link ->
-                val path = link.attr("abs:href").toHttpUrlOrNull()?.encodedPath
-                    ?: return@mapNotNull null
-                val slug = chapterSlugRegex.find(path)?.groupValues?.get(1) ?: return@mapNotNull null
-                val name = link.text().ifBlank { "Capítulo $slug" }
-                SChapter.create().apply {
-                    url = path
-                    this.name = name
-                    chapter_number = slug.toFloatOrNull() ?: 0f
-                }
-            }
-            .distinctBy { it.url }
-            .sortedByDescending { it.chapter_number }
-    }
-
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val response = client.get(baseUrl + chapter.url)
         if (response.request.url.encodedPath.startsWith("/users/")) {
             throw IOException("Este capítulo exige login (restrito por idade)")
         }
         val document = response.asJsoup()
-        return document.select("div.comic_page_image img")
-            .mapNotNull { img ->
-                img.attr("abs:data-src")
-                    .ifBlank { img.attr("abs:src") }
-                    .takeIf { it.startsWith("http") }
-            }
-            .distinct()
+        return parsePageUrls(document)
             .mapIndexed { index, url -> Page(index, imageUrl = url) }
     }
 }
